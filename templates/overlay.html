@@ -161,6 +161,20 @@
       box-shadow: 0 0 10px rgba(94, 229, 255, 0.25);
     }
 
+    .hud-empty {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 1px dashed rgba(94, 229, 255, 0.35);
+      background: rgba(8, 26, 48, 0.5);
+      color: var(--hud-muted);
+      font-size: 12px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      text-align: center;
+      box-shadow: inset 0 0 18px rgba(94, 229, 255, 0.1);
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -254,6 +268,10 @@ document.querySelectorAll('input[name="region"]').forEach(el=>{
 });
 
 function renderTable(data){
+  if(!Array.isArray(data) || !data.length){
+    document.getElementById('minerals').innerHTML = '';
+    return;
+  }
   let html = '<table><tr><th>Mineral</th><th>Prob</th><th>Min</th><th>Max</th><th>Med</th></tr>';
   for(const row of data){
     html += `<tr>
@@ -268,6 +286,15 @@ function renderTable(data){
   document.getElementById('minerals').innerHTML = html;
 }
 
+function showEmptyState(category){
+  const message = category && category.toLowerCase().includes('salvage')
+    ? 'No mineral composition available for salvage targets.'
+    : '';
+  document.getElementById('minerals').innerHTML = message
+    ? `<div class="hud-empty">${message}</div>`
+    : '';
+}
+
 async function poll(){
   try {
     const r = await fetch('/status?region='+region);
@@ -278,7 +305,13 @@ async function poll(){
       document.getElementById('name').textContent = text;
       document.getElementById('code').textContent = "Code: " + (j.code ?? "");
       document.getElementById('raw').textContent = j.code_raw ? ("(raw: " + j.code_raw + ", conf " + j.confidence.toFixed(2) + ")") : "";
-      if(j.table){ renderTable(j.table); }
+      const info = j.info || {};
+      const category = info.category || '';
+      if(Array.isArray(j.table) && j.table.length){
+        renderTable(j.table);
+      } else {
+        showEmptyState(category);
+      }
     }
   } catch(e){ console.error(e); }
   setTimeout(poll, 500);

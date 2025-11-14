@@ -8,9 +8,9 @@ import sys
 import socket
 from pathlib import Path
 from threading import Thread
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageTk
 import cv2
 import numpy as np
 import mss
@@ -55,6 +55,9 @@ logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 
+ScaleWidget = Union[tk.Scale, ttk.Scale]
+
+
 def apply_glass_theme(root: tk.Tk) -> Dict[str, str]:
     """Apply a holographic "glass" inspired theme to the Tkinter UI."""
 
@@ -68,6 +71,9 @@ def apply_glass_theme(root: tk.Tk) -> Dict[str, str]:
         "button_hover": "#1c4d70",
         "border": "#164b6f",
         "glow": "#36a4ff",
+        "knob": "#134064",
+        "knob_active": "#1f6d9c",
+        "knob_outline": "#4fc3ff",
     }
 
     root.configure(bg=colors["background"])
@@ -150,25 +156,54 @@ def apply_glass_theme(root: tk.Tk) -> Dict[str, str]:
         foreground=[("active", colors["accent"]), ("selected", colors["accent"])],
     )
 
-    return colors
+    def make_slider_image(fill: str, outline: str) -> ImageTk.PhotoImage:
+        size = 22
+        radius = 8
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle(
+            (1, 1, size - 2, size - 2),
+            radius=radius,
+            fill=fill,
+            outline=outline,
+            width=2,
+        )
+        return ImageTk.PhotoImage(img)
 
-
-def style_scale(scale: tk.Scale, colors: Dict[str, str]) -> None:
-    """Apply translucent styling to a Tkinter Scale widget."""
+    slider_normal = make_slider_image(colors["knob"], colors["knob_outline"])
+    slider_active = make_slider_image(colors["knob_active"], colors["accent"])
+    root._glass_slider_images = (slider_normal, slider_active)  # type: ignore[attr-defined]
 
     try:
-        scale.configure(
-            bg=colors["panel"],
-            fg=colors["accent"],
-            troughcolor=colors["background"],
-            highlightthickness=0,
-            bd=0,
-            sliderrelief="flat",
-            activebackground=colors["button_hover"],
-            font=("Segoe UI", 9),
+        style.element_create(
+            "Glass.Horizontal.Scale.slider",
+            "image",
+            slider_normal,
+            ("active", slider_active),
+            ("pressed", slider_active),
         )
     except tk.TclError:
-        scale.configure(bg=colors["panel"], fg=colors["accent"])  # type: ignore[arg-type]
+        pass
+
+    style.layout(
+        "Glass.Horizontal.TScale",
+        [
+            (
+                "Horizontal.Scale.trough",
+                {
+                    "sticky": "ew",
+                    "children": [("Glass.Horizontal.Scale.slider", {"side": "left", "sticky": ""})],
+                },
+            )
+        ],
+    )
+    style.configure(
+        "Glass.Horizontal.TScale",
+        background=colors["panel"],
+        troughcolor=colors["background"],
+    )
+
+    return colors
 
 
 def style_spinbox(spinbox: tk.Spinbox, colors: Dict[str, str]) -> None:
@@ -186,6 +221,83 @@ def style_spinbox(spinbox: tk.Spinbox, colors: Dict[str, str]) -> None:
         )
     except tk.TclError:
         spinbox.configure(bg=colors["panel"], fg=colors["text"])
+
+
+def create_glass_scale(
+    parent: ttk.Widget,
+    *,
+    text: str,
+    minimum: float,
+    maximum: float,
+    initial: float,
+    command: Optional[Callable[[str], None]],
+    resolution: float = 1.0,
+    padding: Tuple[int, int] = (0, 4),
+) -> ttk.Scale:
+    """Create a labeled ttk.Scale with the custom glass styling."""
+
+    container = ttk.Frame(parent, style="Glass.Section.TFrame")
+    container.pack(fill="x", padx=4, pady=padding)
+
+    value_var = tk.DoubleVar(value=initial)
+
+    def format_value(value: float) -> str:
+        if resolution and resolution < 1.0:
+            return f"{value:.2f}"
+        return f"{int(round(value))}"
+
+    label_var = tk.StringVar(value=f"{text}: {format_value(initial)}")
+    ttk.Label(container, textvariable=label_var, style="Glass.Small.TLabel").pack(anchor="w", padx=2)
+
+    def on_change(raw_value: str) -> None:
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            numeric = value_var.get()
+
+        if resolution:
+            snapped = round(numeric / resolution) * resolution
+        else:
+            snapped = numeric
+
+        if abs(snapped - value_var.get()) > 1e-9:
+            value_var.set(snapped)
+            numeric = snapped
+        else:
+            numeric = snapped
+
+        label_var.set(f"{text}: {format_value(numeric)}")
+
+        if command is not None:
+            if resolution and resolution < 1.0:
+                command(f"{numeric:.2f}")
+            else:
+                command(str(int(round(numeric))))
+
+    scale = ttk.Scale(
+        container,
+        from_=minimum,
+        to=maximum,
+        orient="horizontal",
+        variable=value_var,
+        command=on_change,
+        style="Glass.Horizontal.TScale",
+    )
+    scale.pack(fill="x", padx=2, pady=(2, 0))
+
+    def update_label(*_: object) -> None:
+        value = value_var.get()
+        label_var.set(f"{text}: {format_value(value)}")
+
+    value_var.trace_add("write", update_label)
+
+    scale._glass_container = container  # type: ignore[attr-defined]
+    scale._glass_value_var = value_var  # type: ignore[attr-defined]
+    scale._glass_label_var = label_var  # type: ignore[attr-defined]
+    scale._glass_command = command  # type: ignore[attr-defined]
+    scale._glass_resolution = resolution  # type: ignore[attr-defined]
+
+    return scale
 
 def show_installation_message(system_name: str) -> None:
     """Present final installation instructions, using a GUI prompt on Windows."""
@@ -391,7 +503,7 @@ GUI_CONTROL_STATE = {
 }
 
 
-def register_capture_sliders(left: tk.Scale, top: tk.Scale, width: tk.Scale, height: tk.Scale) -> None:
+def register_capture_sliders(left: ScaleWidget, top: ScaleWidget, width: ScaleWidget, height: ScaleWidget) -> None:
     GUI_CONTROL_STATE["capture"].update({
         "left": left,
         "top": top,
@@ -401,12 +513,12 @@ def register_capture_sliders(left: tk.Scale, top: tk.Scale, width: tk.Scale, hei
 
 
 def register_anchor_sliders(
-    left: tk.Scale,
-    top: tk.Scale,
-    width: tk.Scale,
-    height: tk.Scale,
-    offset_x: tk.Scale,
-    offset_y: tk.Scale,
+    left: ScaleWidget,
+    top: ScaleWidget,
+    width: ScaleWidget,
+    height: ScaleWidget,
+    offset_x: ScaleWidget,
+    offset_y: ScaleWidget,
 ) -> None:
     GUI_CONTROL_STATE["anchor"].update({
         "left": left,
@@ -418,7 +530,7 @@ def register_anchor_sliders(
     })
 
 
-def register_overlay_sliders(offset_x: tk.Scale, offset_y: tk.Scale) -> None:
+def register_overlay_sliders(offset_x: ScaleWidget, offset_y: ScaleWidget) -> None:
     GUI_CONTROL_STATE["overlay"].update({"offset_x": offset_x, "offset_y": offset_y})
 
 
@@ -704,7 +816,7 @@ MULTIPLIER_CODES = {
     1820: {"key": "QUARTZITE", "display_name": "Quartzite", "rarity": "common", "category": "Rock Deposits"},
     1730: {"key": "SHALE", "display_name": "Shale", "rarity": "common", "category": "Rock Deposits"},
     620: {"key": "GEMS", "display_name": "Gems", "rarity": "common", "category": "Gems"},
-    2000: {"key": "SALVAGE", "display_name": "Metal Pannals", "rarity": "common", "category": "Savlage"},
+    2000: {"key": "SALVAGE", "display_name": "Metal Panels", "rarity": "common", "category": "Salvage"},
 }
 
 # ---------- Ore Value Tiers ----------
@@ -1493,53 +1605,42 @@ def launch_gui():
     frm_region = ttk.LabelFrame(main, text="Capture Region", style="Glass.TLabelframe")
     frm_region.pack(fill="x", padx=5, pady=8)
 
-    slider_left = tk.Scale(
+    slider_left = create_glass_scale(
         frm_region,
-        from_=0,
-        to=3000,
-        orient="horizontal",
-        label="Left",
+        text="Left",
+        minimum=0,
+        maximum=3000,
+        initial=CAP_REGION["left"],
         command=update_region_from_sliders,
     )
-    slider_left.set(CAP_REGION["left"])
-    slider_left.pack(fill="x", pady=(0, 4))
-    style_scale(slider_left, colors)
 
-    slider_top = tk.Scale(
+    slider_top = create_glass_scale(
         frm_region,
-        from_=0,
-        to=2000,
-        orient="horizontal",
-        label="Top",
+        text="Top",
+        minimum=0,
+        maximum=2000,
+        initial=CAP_REGION["top"],
         command=update_region_from_sliders,
     )
-    slider_top.set(CAP_REGION["top"])
-    slider_top.pack(fill="x", pady=(0, 4))
-    style_scale(slider_top, colors)
 
-    slider_width = tk.Scale(
+    slider_width = create_glass_scale(
         frm_region,
-        from_=50,
-        to=1000,
-        orient="horizontal",
-        label="Width",
+        text="Width",
+        minimum=50,
+        maximum=1000,
+        initial=CAP_REGION["width"],
         command=update_region_from_sliders,
     )
-    slider_width.set(CAP_REGION["width"])
-    slider_width.pack(fill="x", pady=(0, 4))
-    style_scale(slider_width, colors)
 
-    slider_height = tk.Scale(
+    slider_height = create_glass_scale(
         frm_region,
-        from_=20,
-        to=500,
-        orient="horizontal",
-        label="Height",
+        text="Height",
+        minimum=20,
+        maximum=500,
+        initial=CAP_REGION["height"],
         command=update_region_from_sliders,
+        padding=(0, 0),
     )
-    slider_height.set(CAP_REGION["height"])
-    slider_height.pack(fill="x")
-    style_scale(slider_height, colors)
 
     register_capture_sliders(slider_left, slider_top, slider_width, slider_height)
     sync_capture_sliders()
@@ -1594,39 +1695,60 @@ def launch_gui():
     style_spinbox(threshold_spin, colors)
     threshold_var.trace_add("write", update_threshold)
 
-    anchor_left = tk.Scale(frm_anchor, from_=0, to=3840, orient="horizontal",
-                           label="Anchor Left", command=update_anchor_region_from_sliders)
-    anchor_left.set(ANCHOR_REGION["left"])
-    anchor_left.pack(fill="x")
-    style_scale(anchor_left, colors)
+    anchor_left = create_glass_scale(
+        frm_anchor,
+        text="Anchor Left",
+        minimum=0,
+        maximum=3840,
+        initial=ANCHOR_REGION["left"],
+        command=update_anchor_region_from_sliders,
+    )
 
-    anchor_top = tk.Scale(frm_anchor, from_=0, to=2160, orient="horizontal",
-                          label="Anchor Top", command=update_anchor_region_from_sliders)
-    anchor_top.set(ANCHOR_REGION["top"])
-    anchor_top.pack(fill="x")
-    style_scale(anchor_top, colors)
+    anchor_top = create_glass_scale(
+        frm_anchor,
+        text="Anchor Top",
+        minimum=0,
+        maximum=2160,
+        initial=ANCHOR_REGION["top"],
+        command=update_anchor_region_from_sliders,
+    )
 
-    anchor_width = tk.Scale(frm_anchor, from_=50, to=1200, orient="horizontal",
-                            label="Anchor Width", command=update_anchor_region_from_sliders)
-    anchor_width.set(ANCHOR_REGION["width"])
-    anchor_width.pack(fill="x")
-    style_scale(anchor_width, colors)
+    anchor_width = create_glass_scale(
+        frm_anchor,
+        text="Anchor Width",
+        minimum=50,
+        maximum=1200,
+        initial=ANCHOR_REGION["width"],
+        command=update_anchor_region_from_sliders,
+    )
 
-    anchor_height = tk.Scale(frm_anchor, from_=50, to=800, orient="horizontal",
-                             label="Anchor Height", command=update_anchor_region_from_sliders)
-    anchor_height.set(ANCHOR_REGION["height"])
-    anchor_height.pack(fill="x")
-    style_scale(anchor_height, colors)
+    anchor_height = create_glass_scale(
+        frm_anchor,
+        text="Anchor Height",
+        minimum=50,
+        maximum=800,
+        initial=ANCHOR_REGION["height"],
+        command=update_anchor_region_from_sliders,
+    )
 
-    anchor_offset_x = tk.Scale(frm_anchor, from_=-300, to=600, orient="horizontal",
-                               label="Offset X", command=update_anchor_offset_from_sliders)
-    anchor_offset_x.set(ANCHOR_OFFSET["x"])
-    anchor_offset_x.pack(fill="x")
+    anchor_offset_x = create_glass_scale(
+        frm_anchor,
+        text="Offset X",
+        minimum=-300,
+        maximum=600,
+        initial=ANCHOR_OFFSET["x"],
+        command=update_anchor_offset_from_sliders,
+    )
 
-    anchor_offset_y = tk.Scale(frm_anchor, from_=-300, to=600, orient="horizontal",
-                               label="Offset Y", command=update_anchor_offset_from_sliders)
-    anchor_offset_y.set(ANCHOR_OFFSET["y"])
-    anchor_offset_y.pack(fill="x")
+    anchor_offset_y = create_glass_scale(
+        frm_anchor,
+        text="Offset Y",
+        minimum=-300,
+        maximum=600,
+        initial=ANCHOR_OFFSET["y"],
+        command=update_anchor_offset_from_sliders,
+        padding=(0, 0),
+    )
 
     register_anchor_sliders(
         anchor_left,
@@ -1647,29 +1769,24 @@ def launch_gui():
     frm_display = ttk.LabelFrame(main, text="Result Display", style="Glass.TLabelframe")
     frm_display.pack(fill="x", padx=5, pady=8)
 
-    info_offset_x = tk.Scale(
+    info_offset_x = create_glass_scale(
         frm_display,
-        from_=-800,
-        to=800,
-        orient="horizontal",
-        label="Display offset X",
+        text="Display offset X",
+        minimum=-800,
+        maximum=800,
+        initial=int(INFO_OVERLAY_OFFSET.get("x", 0)),
         command=update_info_overlay_from_sliders,
     )
-    info_offset_x.set(int(INFO_OVERLAY_OFFSET.get("x", 0)))
-    info_offset_x.pack(fill="x", pady=(0, 4))
-    style_scale(info_offset_x, colors)
 
-    info_offset_y = tk.Scale(
+    info_offset_y = create_glass_scale(
         frm_display,
-        from_=-600,
-        to=600,
-        orient="horizontal",
-        label="Display offset Y",
+        text="Display offset Y",
+        minimum=-600,
+        maximum=600,
+        initial=int(INFO_OVERLAY_OFFSET.get("y", 0)),
         command=update_info_overlay_from_sliders,
+        padding=(0, 0),
     )
-    info_offset_y.set(int(INFO_OVERLAY_OFFSET.get("y", 0)))
-    info_offset_y.pack(fill="x")
-    style_scale(info_offset_y, colors)
 
     register_overlay_sliders(info_offset_x, info_offset_y)
     sync_overlay_sliders()
@@ -1799,6 +1916,9 @@ def status():
         deposit_key = (info.get("key") or info.get("name") or "").upper()
         region_tables = DEPOSIT_TABLES.get(selected_region, {})
         table = region_tables.get(deposit_key)
+        category = str(info.get("category", "")).lower()
+        if not table or category not in {"rock deposits", "gems"}:
+            table = None
 
     response = {
         # Legacy keys kept for compatibility with any external tools.
