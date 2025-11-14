@@ -3,35 +3,260 @@
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-    body { margin: 0; font-family: Arial, sans-serif; background: rgba(0,0,0,0); }
-    .container { padding: 8px; background: rgba(0,0,0,0.45); color: white; border-radius: 8px; }
-    h1 { margin: 0; font-size: 24px; }
-    p { margin: 3px 0; font-size: 16px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
-    th, td { border: 1px solid #666; padding: 4px; text-align: center; }
-    th { background: #222; color: #fff; }
-    td { background: #111; }
-    .toggle { margin-top: 8px; }
-    .small { font-size: 12px; opacity: 0.8; }
-    .legend span { margin-right: 6px; padding: 2px 6px; border-radius: 4px; color: #000; font-weight: bold; }
+    :root {
+      --hud-bg: rgba(10, 24, 46, 0.72);
+      --hud-border: rgba(88, 212, 255, 0.65);
+      --hud-shadow: rgba(23, 122, 178, 0.45);
+      --hud-text: #def7ff;
+      --hud-muted: #7bb6d8;
+      --hud-accent: #5ee5ff;
+      --hud-accent-dark: rgba(39, 120, 205, 0.65);
+      --hud-table-bg: rgba(5, 18, 36, 0.75);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', 'Orbitron', 'Exo 2', sans-serif;
+      background: radial-gradient(circle at top, rgba(32, 97, 184, 0.35), rgba(4, 12, 28, 0)) transparent;
+      color: var(--hud-text);
+    }
+
+    .hud-wrap {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      backdrop-filter: blur(2px);
+    }
+
+    .hud-container {
+      position: relative;
+      width: min(420px, 100%);
+      padding: 18px 22px 24px;
+      background: var(--hud-bg);
+      border: 1px solid var(--hud-border);
+      border-radius: 18px;
+      box-shadow: 0 16px 45px var(--hud-shadow), inset 0 0 35px rgba(108, 208, 255, 0.08);
+      backdrop-filter: blur(22px) saturate(160%);
+      overflow: hidden;
+    }
+
+    .hud-container::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(120deg, rgba(94, 229, 255, 0.12), transparent 45%);
+      pointer-events: none;
+    }
+
+    .hud-container::after {
+      content: "";
+      position: absolute;
+      left: -40%;
+      top: -60%;
+      width: 90%;
+      height: 220%;
+      transform: translateX(-30%) rotate(25deg);
+      background: linear-gradient(transparent 20%, rgba(94, 229, 255, 0.12) 40%, transparent 60%);
+      animation: sweep 8s linear infinite;
+      pointer-events: none;
+    }
+
+    @keyframes sweep {
+      0% { transform: translateX(-30%) rotate(25deg); }
+      100% { transform: translateX(120%) rotate(25deg); }
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      text-shadow: 0 0 12px rgba(94, 229, 255, 0.65);
+    }
+
+    .hud-subtitle {
+      margin: 4px 0 2px;
+      font-size: 14px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--hud-muted);
+    }
+
+    .hud-raw {
+      margin-top: 6px;
+      font-size: 11px;
+      color: rgba(222, 247, 255, 0.65);
+      letter-spacing: 0.6px;
+    }
+
+    .hud-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .toggle-group {
+      display: flex;
+      gap: 8px;
+      background: rgba(10, 35, 61, 0.6);
+      padding: 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(94, 229, 255, 0.2);
+      box-shadow: inset 0 0 12px rgba(94, 229, 255, 0.12);
+    }
+
+    .toggle-pill {
+      position: relative;
+    }
+
+    .toggle-pill input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .toggle-pill span {
+      display: inline-block;
+      padding: 6px 16px;
+      font-size: 12px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: var(--hud-muted);
+      border-radius: 999px;
+      background: rgba(8, 26, 48, 0.55);
+      transition: all 0.25s ease;
+      border: 1px solid transparent;
+    }
+
+    .toggle-pill input:checked + span {
+      color: var(--hud-text);
+      border-color: rgba(94, 229, 255, 0.6);
+      background: linear-gradient(135deg, rgba(39, 120, 205, 0.6), rgba(94, 229, 255, 0.35));
+      box-shadow: 0 0 14px rgba(94, 229, 255, 0.55);
+    }
+
+    .legend {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 11px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: var(--hud-muted);
+    }
+
+    .legend span {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      color: #02131f;
+      box-shadow: 0 0 10px rgba(94, 229, 255, 0.25);
+    }
+
+    .hud-empty {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 1px dashed rgba(94, 229, 255, 0.35);
+      background: rgba(8, 26, 48, 0.5);
+      color: var(--hud-muted);
+      font-size: 12px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      text-align: center;
+      box-shadow: inset 0 0 18px rgba(94, 229, 255, 0.1);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+      font-size: 13px;
+      background: var(--hud-table-bg);
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(94, 229, 255, 0.2);
+      box-shadow: inset 0 0 22px rgba(94, 229, 255, 0.08);
+    }
+
+    th, td {
+      padding: 10px 8px;
+      text-align: center;
+      border-bottom: 1px solid rgba(94, 229, 255, 0.12);
+      border-right: 1px solid rgba(94, 229, 255, 0.08);
+    }
+
+    th:last-child, td:last-child {
+      border-right: none;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    th {
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-size: 11px;
+      background: linear-gradient(120deg, rgba(39, 120, 205, 0.55), rgba(12, 40, 72, 0.8));
+      color: var(--hud-text);
+      text-shadow: 0 0 8px rgba(94, 229, 255, 0.6);
+    }
+
+    td {
+      color: var(--hud-text);
+    }
+
+    @media (max-width: 520px) {
+      .hud-container {
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 22px;
+      }
+
+      .hud-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .toggle-group {
+        align-self: flex-start;
+      }
+    }
     </style>
 </head>
 <body>
-<div class="container" id="box">
-  <h1 id="name">No code</h1>
-  <p id="code"></p>
-  <p id="raw" class="small"></p>
-  <div class="toggle">
-    <label><input type="radio" name="region" value="STANTON" checked> Stanton</label>
-    <label><input type="radio" name="region" value="PYRO"> Pyro</label>
+<div class="hud-wrap">
+  <div class="hud-container" id="box">
+    <div class="hud-header">
+      <div>
+        <h1 id="name">No code</h1>
+        <p id="code" class="hud-subtitle"></p>
+      </div>
+      <div class="toggle-group">
+        <label class="toggle-pill"><input type="radio" name="region" value="STANTON" checked><span>Stanton</span></label>
+        <label class="toggle-pill"><input type="radio" name="region" value="PYRO"><span>Pyro</span></label>
+      </div>
+    </div>
+    <p id="raw" class="hud-raw"></p>
+    <div class="legend">
+      <span style="background:#E88AFF;">Highest</span>
+      <span style="background:#63E64C;">High</span>
+      <span style="background:#E6E14C;">Medium</span>
+      <span style="background:#E69E4C;">Low</span>
+    </div>
+    <div id="minerals" class="hud-table"></div>
   </div>
-  <div class="legend" style="margin-top:8px; font-size:12px;">
-    <span style="background:#E88AFF;">Highest</span>
-    <span style="background:#63E64C;">High</span>
-    <span style="background:#E6E14C;">Medium</span>
-    <span style="background:#E69E4C;">Low</span>
-  </div>
-  <div id="minerals"></div>
 </div>
 <script>
 let region = "STANTON";
@@ -43,6 +268,10 @@ document.querySelectorAll('input[name="region"]').forEach(el=>{
 });
 
 function renderTable(data){
+  if(!Array.isArray(data) || !data.length){
+    document.getElementById('minerals').innerHTML = '';
+    return;
+  }
   let html = '<table><tr><th>Mineral</th><th>Prob</th><th>Min</th><th>Max</th><th>Med</th></tr>';
   for(const row of data){
     html += `<tr>
@@ -57,6 +286,15 @@ function renderTable(data){
   document.getElementById('minerals').innerHTML = html;
 }
 
+function showEmptyState(category){
+  const message = category && category.toLowerCase().includes('salvage')
+    ? 'No mineral composition available for salvage targets.'
+    : '';
+  document.getElementById('minerals').innerHTML = message
+    ? `<div class="hud-empty">${message}</div>`
+    : '';
+}
+
 async function poll(){
   try {
     const r = await fetch('/status?region='+region);
@@ -67,7 +305,13 @@ async function poll(){
       document.getElementById('name').textContent = text;
       document.getElementById('code').textContent = "Code: " + (j.code ?? "");
       document.getElementById('raw').textContent = j.code_raw ? ("(raw: " + j.code_raw + ", conf " + j.confidence.toFixed(2) + ")") : "";
-      if(j.table){ renderTable(j.table); }
+      const info = j.info || {};
+      const category = info.category || '';
+      if(Array.isArray(j.table) && j.table.length){
+        renderTable(j.table);
+      } else {
+        showEmptyState(category);
+      }
     }
   } catch(e){ console.error(e); }
   setTimeout(poll, 500);
