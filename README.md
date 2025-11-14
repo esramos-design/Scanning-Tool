@@ -164,6 +164,22 @@ Tips:
 - **Yellow text** = Medium-value materials
 - **Orange text** = Lower-value materials
 
+### View the overlay in a browser or on your phone
+
+The scanner also hosts a tiny web server so you can check the latest scan results from any
+device on the same network (for example, a tablet next to your rig):
+
+1. Start the scanner as usual. When it launches, look in the console/log window for a
+   message similar to: `Starting overlay server: http://127.0.0.1:5000 (this device) |
+   http://192.168.x.x:5000 (local network)`.
+2. On another device connected to the **same Wi‑Fi or LAN**, open a browser and enter the
+   `http://192.168.x.x:5000` address that matches your PC's local network IP.
+3. The overlay page will refresh automatically with each new scan, mirroring what the in-game
+   overlay shows.
+
+> 🔐 **Firewall tip:** If the page will not load from another device, allow Python (or port
+> 5000) through your operating system firewall.
+
 ## 🛠️ If something goes wrong
 
 ### "Python not found" or similar errors
