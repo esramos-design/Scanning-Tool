@@ -129,6 +129,9 @@ capture box using an offset.
 6. **Fine-tune the threshold** – If matching is inconsistent, tweak the detection
    threshold (default `0.82`). Lower values make matching easier but risk false positives;
    higher values require a closer match.
+7. **Control the refresh rate** – The **Alignment interval (ms)** control adjusts how
+   frequently the app re-detects the anchor and nudges the capture region. Lower values
+   (e.g. 200–300 ms) hug the HUD more tightly, while higher values reduce GPU/CPU usage.
 
 Tips:
 
@@ -142,12 +145,13 @@ Tips:
 
 **Option 1 - Hotkeys (Easy):**
 - Press **"7"** to scan once
-- Press **"Ctrl+7"** to start auto-scanning every 2 seconds
+- Press **"Ctrl+7"** to start auto-scanning using the interval set in the
+  **Continuous capture interval (s)** control (defaults to 2.0 seconds)
 - Press **"8"** to hide/show the red box
 
 **Option 2 - Buttons (If hotkeys don't work):**
 - Click **"Single Scan"** to scan once
-- Click **"Loop Toggle"** to start/stop auto-scanning
+- Click **"Loop Toggle"** to start/stop auto-scanning (uses the same adjustable interval)
 
 ### Reading the results
 

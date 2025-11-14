@@ -222,6 +222,8 @@ ANCHOR_OFFSET = {"x": 36, "y": 56}
 ANCHOR_THRESHOLD = 0.82
 AUTO_ALIGN_ENABLED = True
 ANCHOR_TEMPLATE_DIR = "assets/anchor_templates"
+ALIGNMENT_POLL_INTERVAL_MS = 500
+CONTINUOUS_CAPTURE_INTERVAL = 2.0
 label_color = "yellow"
 MIN_CONFIDENCE = 0.65
 DEBUG_SHOW_OVERLAY = True
@@ -242,7 +244,105 @@ last_alignment_info = {
     "score": 0.0,
     "match_left": None,
     "match_top": None,
+    "capture_left": None,
+    "capture_top": None,
 }
+
+
+GUI_CONTROL_STATE = {
+    "capture": {"left": None, "top": None, "width": None, "height": None},
+    "anchor": {"left": None, "top": None, "width": None, "height": None, "offset_x": None, "offset_y": None},
+    "syncing": {"capture": False, "anchor": False},
+}
+
+
+def register_capture_sliders(left: tk.Scale, top: tk.Scale, width: tk.Scale, height: tk.Scale) -> None:
+    GUI_CONTROL_STATE["capture"].update({
+        "left": left,
+        "top": top,
+        "width": width,
+        "height": height,
+    })
+
+
+def register_anchor_sliders(
+    left: tk.Scale,
+    top: tk.Scale,
+    width: tk.Scale,
+    height: tk.Scale,
+    offset_x: tk.Scale,
+    offset_y: tk.Scale,
+) -> None:
+    GUI_CONTROL_STATE["anchor"].update({
+        "left": left,
+        "top": top,
+        "width": width,
+        "height": height,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+    })
+
+
+def sync_capture_sliders() -> None:
+    state = GUI_CONTROL_STATE
+    widgets = state["capture"]
+    widget = widgets["left"]
+    if not widget:
+        return
+    if state["syncing"]["capture"]:
+        return
+
+    def _apply() -> None:
+        if state["syncing"]["capture"]:
+            return
+        state["syncing"]["capture"] = True
+        try:
+            try:
+                widgets["left"].set(int(CAP_REGION["left"]))
+                widgets["top"].set(int(CAP_REGION["top"]))
+                widgets["width"].set(int(CAP_REGION["width"]))
+                widgets["height"].set(int(CAP_REGION["height"]))
+            except tk.TclError:
+                pass
+        finally:
+            state["syncing"]["capture"] = False
+
+    try:
+        widget.after(0, _apply)
+    except tk.TclError:
+        pass
+
+
+def sync_anchor_sliders() -> None:
+    state = GUI_CONTROL_STATE
+    widgets = state["anchor"]
+    widget = widgets["left"]
+    if not widget:
+        return
+    if state["syncing"]["anchor"]:
+        return
+
+    def _apply() -> None:
+        if state["syncing"]["anchor"]:
+            return
+        state["syncing"]["anchor"] = True
+        try:
+            try:
+                widgets["left"].set(int(ANCHOR_REGION["left"]))
+                widgets["top"].set(int(ANCHOR_REGION["top"]))
+                widgets["width"].set(int(ANCHOR_REGION["width"]))
+                widgets["height"].set(int(ANCHOR_REGION["height"]))
+                widgets["offset_x"].set(int(ANCHOR_OFFSET["x"]))
+                widgets["offset_y"].set(int(ANCHOR_OFFSET["y"]))
+            except tk.TclError:
+                pass
+        finally:
+            state["syncing"]["anchor"] = False
+
+    try:
+        widget.after(0, _apply)
+    except tk.TclError:
+        pass
 
 
 # ---------- Config Handling ----------
@@ -365,6 +465,7 @@ anchor_tracker: Optional[AnchorRegionTracker] = None
 
 def load_config():
     global CAP_REGION, label_color, AUTO_ALIGN_ENABLED, ANCHOR_REGION, ANCHOR_OFFSET, ANCHOR_THRESHOLD, ANCHOR_TEMPLATE_DIR
+    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
@@ -376,6 +477,8 @@ def load_config():
                 ANCHOR_OFFSET = data.get("ANCHOR_OFFSET", ANCHOR_OFFSET)
                 ANCHOR_THRESHOLD = data.get("ANCHOR_THRESHOLD", ANCHOR_THRESHOLD)
                 ANCHOR_TEMPLATE_DIR = data.get("ANCHOR_TEMPLATE_DIR", ANCHOR_TEMPLATE_DIR)
+                ALIGNMENT_POLL_INTERVAL_MS = data.get("ALIGNMENT_POLL_INTERVAL_MS", ALIGNMENT_POLL_INTERVAL_MS)
+                CONTINUOUS_CAPTURE_INTERVAL = data.get("CONTINUOUS_CAPTURE_INTERVAL", CONTINUOUS_CAPTURE_INTERVAL)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Config file invalid or empty, resetting: {e}")
             save_config()
@@ -389,6 +492,7 @@ def load_config():
 
 def save_config():
     global CAP_REGION, label_color, AUTO_ALIGN_ENABLED, ANCHOR_REGION, ANCHOR_OFFSET, ANCHOR_THRESHOLD, ANCHOR_TEMPLATE_DIR
+    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL
     data = {
         "CAP_REGION": CAP_REGION,
         "label_color": label_color,
@@ -397,6 +501,8 @@ def save_config():
         "ANCHOR_OFFSET": ANCHOR_OFFSET,
         "ANCHOR_THRESHOLD": ANCHOR_THRESHOLD,
         "ANCHOR_TEMPLATE_DIR": ANCHOR_TEMPLATE_DIR,
+        "ALIGNMENT_POLL_INTERVAL_MS": ALIGNMENT_POLL_INTERVAL_MS,
+        "CONTINUOUS_CAPTURE_INTERVAL": CONTINUOUS_CAPTURE_INTERVAL,
     }
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
@@ -587,11 +693,18 @@ def perform_auto_alignment() -> bool:
             "score": 0.0,
             "match_left": None,
             "match_top": None,
+            "capture_left": None,
+            "capture_top": None,
         })
         return False
 
-    new_left = int(round(detection["match_left"] + ANCHOR_OFFSET.get("x", 0)))
-    new_top = int(round(detection["match_top"] + ANCHOR_OFFSET.get("y", 0)))
+    template_w = detection.get("template_width", float(CAP_REGION["width"]))
+    template_h = detection.get("template_height", float(CAP_REGION["height"]))
+    base_left = detection["match_left"] + (template_w / 2.0) - (CAP_REGION["width"] / 2.0)
+    base_top = detection["match_top"] + (template_h / 2.0) - (CAP_REGION["height"] / 2.0)
+
+    new_left = int(round(base_left + ANCHOR_OFFSET.get("x", 0)))
+    new_top = int(round(base_top + ANCHOR_OFFSET.get("y", 0)))
 
     CAP_REGION["left"] = max(0, new_left)
     CAP_REGION["top"] = max(0, new_top)
@@ -602,7 +715,11 @@ def perform_auto_alignment() -> bool:
         "score": float(detection["score"]),
         "match_left": detection["match_left"],
         "match_top": detection["match_top"],
+        "capture_left": CAP_REGION["left"],
+        "capture_top": CAP_REGION["top"],
     })
+
+    sync_capture_sliders()
 
     if capture_overlay_root:
         try:
@@ -929,6 +1046,8 @@ def update_overlay_region():
 
 def launch_gui():
     def update_region_from_sliders(*args):
+        if GUI_CONTROL_STATE["syncing"]["capture"]:
+            return
         CAP_REGION["left"] = int(slider_left.get())
         CAP_REGION["top"] = int(slider_top.get())
         CAP_REGION["width"] = int(slider_width.get())
@@ -937,6 +1056,8 @@ def launch_gui():
         update_capture_overlay_region()
 
     def update_anchor_region_from_sliders(*args):
+        if GUI_CONTROL_STATE["syncing"]["anchor"]:
+            return
         ANCHOR_REGION["left"] = int(anchor_left.get())
         ANCHOR_REGION["top"] = int(anchor_top.get())
         ANCHOR_REGION["width"] = int(anchor_width.get())
@@ -947,6 +1068,8 @@ def launch_gui():
         update_anchor_overlay_region()
 
     def update_anchor_offset_from_sliders(*args):
+        if GUI_CONTROL_STATE["syncing"]["anchor"]:
+            return
         ANCHOR_OFFSET["x"] = int(anchor_offset_x.get())
         ANCHOR_OFFSET["y"] = int(anchor_offset_y.get())
         set_anchor_status(f"Anchor offset updated: {ANCHOR_OFFSET}", hold=2.0)
@@ -1019,6 +1142,26 @@ def launch_gui():
             hide_anchor_overlay()
             set_anchor_status("Anchor overlay hidden.")
 
+    def update_alignment_interval(*_args):
+        global ALIGNMENT_POLL_INTERVAL_MS
+        try:
+            value = int(alignment_interval_var.get())
+        except (tk.TclError, ValueError):
+            return
+        value = max(100, min(5000, value))
+        ALIGNMENT_POLL_INTERVAL_MS = value
+        set_anchor_status(f"Alignment interval set to {ALIGNMENT_POLL_INTERVAL_MS} ms", hold=2.0)
+
+    def update_capture_interval(*_args):
+        global CONTINUOUS_CAPTURE_INTERVAL
+        try:
+            value = float(capture_interval_var.get())
+        except (tk.TclError, ValueError):
+            return
+        value = max(0.2, min(30.0, value))
+        CONTINUOUS_CAPTURE_INTERVAL = value
+        status_var.set(f"Continuous capture interval set to {CONTINUOUS_CAPTURE_INTERVAL:.1f}s")
+
     def alignment_poll():
         now = time.time()
         message: Optional[str] = None
@@ -1033,6 +1176,8 @@ def launch_gui():
                         "score": 0.0,
                         "match_left": None,
                         "match_top": None,
+                        "capture_left": None,
+                        "capture_top": None,
                     }
                 )
             else:
@@ -1042,6 +1187,9 @@ def launch_gui():
                     message = (
                         f"Anchor locked using {info['template']} (score {info['score']:.2f})."
                     )
+                    capture_msg = f"Auto alignment adjusted CAP_REGION: {CAP_REGION}"
+                    if status_var.get() != capture_msg:
+                        status_var.set(capture_msg)
                 elif not match_found:
                     message = "Anchor match not found. Adjust search region or add templates."
         else:
@@ -1053,6 +1201,8 @@ def launch_gui():
                     "score": 0.0,
                     "match_left": None,
                     "match_top": None,
+                    "capture_left": None,
+                    "capture_top": None,
                 }
             )
 
@@ -1062,7 +1212,8 @@ def launch_gui():
                 alignment_status_cache["message"] = message
 
         try:
-            root.after(500, alignment_poll)
+            interval = max(100, int(ALIGNMENT_POLL_INTERVAL_MS))
+            root.after(interval, alignment_poll)
         except tk.TclError:
             pass
 
@@ -1129,6 +1280,9 @@ def launch_gui():
     slider_height.set(CAP_REGION["height"])
     slider_height.pack(fill="x")
 
+    register_capture_sliders(slider_left, slider_top, slider_width, slider_height)
+    sync_capture_sliders()
+
     frm_anchor = ttk.LabelFrame(root, text="Head Sway Compensation")
     frm_anchor.pack(fill="x", padx=5, pady=5)
 
@@ -1145,6 +1299,22 @@ def launch_gui():
         command=toggle_anchor_overlay_visibility,
     )
     chk_anchor_overlay.pack(anchor="w", padx=5, pady=(0, 5))
+
+    interval_row = ttk.Frame(frm_anchor)
+    interval_row.pack(fill="x", padx=5, pady=(0, 5))
+    ttk.Label(interval_row, text="Alignment interval (ms)").pack(side="left")
+    alignment_interval_var = tk.IntVar(value=int(ALIGNMENT_POLL_INTERVAL_MS))
+    alignment_interval_spin = tk.Spinbox(
+        interval_row,
+        from_=100,
+        to=5000,
+        increment=50,
+        textvariable=alignment_interval_var,
+        width=6,
+        command=update_alignment_interval,
+    )
+    alignment_interval_spin.pack(side="left", padx=5)
+    alignment_interval_var.trace_add("write", update_alignment_interval)
 
     threshold_row = ttk.Frame(frm_anchor)
     threshold_row.pack(fill="x", padx=5, pady=5)
@@ -1185,6 +1355,16 @@ def launch_gui():
     anchor_offset_y.set(ANCHOR_OFFSET["y"])
     anchor_offset_y.pack(fill="x")
 
+    register_anchor_sliders(
+        anchor_left,
+        anchor_top,
+        anchor_width,
+        anchor_height,
+        anchor_offset_x,
+        anchor_offset_y,
+    )
+    sync_anchor_sliders()
+
     anchor_btn_row = ttk.Frame(frm_anchor)
     anchor_btn_row.pack(fill="x", padx=5, pady=5)
     ttk.Button(anchor_btn_row, text="Reload Templates", command=reload_anchor_templates).pack(side="left", padx=5)
@@ -1194,12 +1374,32 @@ def launch_gui():
     frm_ctrl = ttk.LabelFrame(root, text="Controls")
     frm_ctrl.pack(fill="x", padx=5, pady=5)
 
-    tk.Button(frm_ctrl, text="Single Scan", command=capture_once).pack(side="left", padx=5)
-    tk.Button(frm_ctrl, text="Loop Toggle", command=toggle_continuous).pack(side="left", padx=5)
-    tk.Button(frm_ctrl, text="Update Overlay", command=update_overlay_region).pack(side="left", padx=5)
-    tk.Button(frm_ctrl, text="Set Label Color", command=choose_label_color).pack(side="left", padx=5)
-    tk.Button(frm_ctrl, text="Save Config", command=save_config).pack(side="left", padx=5)
-    tk.Button(frm_ctrl, text="Toggle Border", command=toggle_border).pack(side="left", padx=5)
+    capture_interval_frame = ttk.Frame(frm_ctrl)
+    capture_interval_frame.pack(fill="x", padx=5, pady=(5, 10))
+    ttk.Label(capture_interval_frame, text="Continuous capture interval (s)").pack(side="left")
+    capture_interval_var = tk.DoubleVar(value=float(CONTINUOUS_CAPTURE_INTERVAL))
+    capture_interval_spin = tk.Spinbox(
+        capture_interval_frame,
+        from_=0.2,
+        to=30.0,
+        increment=0.1,
+        textvariable=capture_interval_var,
+        width=6,
+        format="%.1f",
+        command=update_capture_interval,
+    )
+    capture_interval_spin.pack(side="left", padx=5)
+    capture_interval_var.trace_add("write", update_capture_interval)
+
+    button_row = ttk.Frame(frm_ctrl)
+    button_row.pack(fill="x", padx=5, pady=(0, 5))
+
+    tk.Button(button_row, text="Single Scan", command=capture_once).pack(side="left", padx=5)
+    tk.Button(button_row, text="Loop Toggle", command=toggle_continuous).pack(side="left", padx=5)
+    tk.Button(button_row, text="Update Overlay", command=update_overlay_region).pack(side="left", padx=5)
+    tk.Button(button_row, text="Set Label Color", command=choose_label_color).pack(side="left", padx=5)
+    tk.Button(button_row, text="Save Config", command=save_config).pack(side="left", padx=5)
+    tk.Button(button_row, text="Toggle Border", command=toggle_border).pack(side="left", padx=5)
 
     ttk.Label(root, textvariable=status_var, anchor="w", justify="left").pack(fill="x", padx=5, pady=(5, 0))
     ttk.Label(root, textvariable=anchor_status_var, anchor="w", justify="left", foreground="#8aa6ff").pack(
@@ -1251,7 +1451,8 @@ def continuous_scan_loop():
     """Run scans repeatedly until continuous_mode is turned off."""
     while continuous_mode:
         capture_once()
-        time.sleep(2)  # adjust scan interval
+        interval = max(0.1, float(CONTINUOUS_CAPTURE_INTERVAL))
+        time.sleep(interval)
 
 
 
