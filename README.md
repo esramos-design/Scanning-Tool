@@ -34,6 +34,7 @@ This tool helps Star Citizen miners by:
 - 🤖 **Reading the numbers** using AI
 - 📊 **Telling you what type of deposit** it is and how valuable the materials are
 - 📍 **Showing an overlay** on your screen with the deposit information
+- 🎯 **Locking onto a HUD anchor** so the capture box follows head sway and ship movement
 
 ## 💻 System Requirements
 
@@ -98,26 +99,69 @@ Since this tool runs alongside Star Citizen, you'll need:
 ### Setting up the scan area
 
 1. **Start Star Citizen** and go to a mining area
-2. **Open the scanner tool** (it will show a red box on your screen)
+2. **Open the scanner tool** (it will show a red capture box on your screen)
 3. **Drag the sliders** in the scanner window to move the red box over where deposit codes appear
 4. **Make the red box** just big enough to cover the deposit code numbers
+
+### 🧭 Head sway compensation (anchor alignment)
+
+The tool can now follow the in-game HUD even when head sway is enabled. It does this by
+locking onto a **stable anchor icon** on your ship screen and then adjusting the red
+capture box using an offset.
+
+1. **Show the anchor overlay** – The cyan “Anchor Region” frame is always-on-top so you
+   can position it over a reliable HUD element. Toggle its visibility with the
+   **"Show anchor overlay"** checkbox if you need a clearer view.
+2. **Position the anchor region** – Use the *Anchor Left/Top/Width/Height* sliders in the
+   **Head Sway Compensation** panel to cover the icon or shape you want to track.
+3. **Capture or add templates** – Click **Open Template Folder** to jump to
+   `assets/anchor_templates/` and drop in one or more cropped screenshots (PNG/JPG/BMP).
+   Each template should be a tight crop of the anchor icon without extra background. Use
+   the Windows Snipping Tool or your favourite editor to grab these still frames from the
+   game. You can organise them in subfolders—everything in this directory is loaded.
+4. **Reload templates** – After adding files, click **Reload Templates**. The status bar
+   will confirm how many templates were loaded. If none load, check the file extension and
+   make sure the images are not empty.
+5. **Calibrate offsets** – With the game open, click **Realign Now**. When the anchor is
+   matched you’ll see a status message showing the template name and match score. Adjust
+   the *Offset X* and *Offset Y* sliders until the red capture box snaps directly over the
+   deposit code after a realign.
+6. **Fine-tune the threshold** – If matching is inconsistent, tweak the detection
+   threshold (default `0.82`). Lower values make matching easier but risk false positives;
+   higher values require a closer match.
+7. **Control the refresh rate** – The **Alignment interval (ms)** control adjusts how
+   frequently the app re-detects the anchor and nudges the capture region. Lower values
+   (e.g. 200–300 ms) hug the HUD more tightly, while higher values reduce GPU/CPU usage.
+
+Tips:
+
+- You can store multiple templates for different lighting conditions or ship displays.
+- Auto alignment runs before every scan when **Enable auto alignment** is checked. Turn it
+  off temporarily if you want to position the capture region manually.
+- Both the capture and anchor overlays continuously lift themselves, so they stay visible
+  even while Star Citizen is in focus or fullscreen.
 
 ### Scanning deposits
 
 **Option 1 - Hotkeys (Easy):**
 - Press **"7"** to scan once
-- Press **"Ctrl+7"** to start auto-scanning every 2 seconds
+- Press **"Ctrl+7"** to start auto-scanning using the interval set in the
+  **Continuous capture interval (s)** control (defaults to 2.0 seconds)
 - Press **"8"** to hide/show the red box
 
 **Option 2 - Buttons (If hotkeys don't work):**
 - Click **"Single Scan"** to scan once
-- Click **"Loop Toggle"** to start/stop auto-scanning
+- Click **"Loop Toggle"** to start/stop auto-scanning (uses the same adjustable interval)
 
 ### Reading the results
 
-- The tool will show **deposit type and quantity** above the red box
+- The tool shows **deposit type and quantity** in the floating overlay near the top of the
+  screen. Use the **Display offset X/Y** sliders in the **Result Display** panel if you need
+  to nudge that overlay around.
+- Only recognised deposits from the bundled database are rendered; random OCR numbers are
+  ignored so the overlay stays clean until a valid match is found.
 - **Green text** = High-value materials (like Quantanium, Gold)
-- **Yellow text** = Medium-value materials  
+- **Yellow text** = Medium-value materials
 - **Orange text** = Lower-value materials
 
 ## 🛠️ If something goes wrong
