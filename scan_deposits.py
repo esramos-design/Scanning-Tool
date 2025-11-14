@@ -556,6 +556,7 @@ capture_rect_id = None
 anchor_overlay_root = None
 anchor_overlay_canvas = None
 anchor_rect_id = None
+anchor_overlay_visible = True
 
 
 def perform_auto_alignment() -> bool:
@@ -746,6 +747,8 @@ def update_capture_overlay_region():
     left = int(CAP_REGION['left']) - (padding_x // 2)
     top = int(CAP_REGION['top']) - padding_y
 
+    overlay_canvas.config(width=overlay_width, height=overlay_height)
+
     overlay_canvas.coords(
         capture_rect_id,
         padding_x // 2,
@@ -761,7 +764,10 @@ def update_capture_overlay_region():
 
 
 def show_anchor_overlay():
-    global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id
+    global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id, anchor_overlay_visible
+
+    if not anchor_overlay_visible:
+        return
 
     if anchor_overlay_root and anchor_overlay_root.winfo_exists():
         try:
@@ -809,7 +815,12 @@ def show_anchor_overlay():
 
 def update_anchor_overlay_region():
     global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id
-    if not anchor_overlay_root or not anchor_overlay_canvas or not anchor_rect_id:
+    if (
+        not anchor_overlay_visible
+        or not anchor_overlay_root
+        or not anchor_overlay_canvas
+        or not anchor_rect_id
+    ):
         return
 
     pad = 40
@@ -817,6 +828,8 @@ def update_anchor_overlay_region():
     height = int(ANCHOR_REGION['height']) + pad
     left = int(ANCHOR_REGION['left']) - (pad // 2)
     top = int(ANCHOR_REGION['top']) - (pad // 2)
+
+    anchor_overlay_canvas.config(width=width, height=height)
 
     anchor_overlay_canvas.coords(
         anchor_rect_id,
@@ -830,6 +843,20 @@ def update_anchor_overlay_region():
         anchor_overlay_root.lift()
     except tk.TclError:
         pass
+
+
+def hide_anchor_overlay():
+    global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id
+
+    if anchor_overlay_root and anchor_overlay_root.winfo_exists():
+        try:
+            anchor_overlay_root.destroy()
+        except tk.TclError:
+            pass
+
+    anchor_overlay_root = None
+    anchor_overlay_canvas = None
+    anchor_rect_id = None
 
 
 def show_overlay():
@@ -921,6 +948,14 @@ def launch_gui():
             anchor_tracker.set_threshold(ANCHOR_THRESHOLD)
         anchor_status_var.set(f"Anchor detection threshold set to {ANCHOR_THRESHOLD:.2f}")
 
+    def toggle_anchor_overlay_visibility():
+        global anchor_overlay_visible
+        anchor_overlay_visible = anchor_overlay_var.get()
+        if anchor_overlay_visible:
+            show_anchor_overlay()
+        else:
+            hide_anchor_overlay()
+
     def on_close():
         global root_overlay, anchor_overlay_root
         save_config()
@@ -972,6 +1007,15 @@ def launch_gui():
     chk_auto_align = tk.Checkbutton(frm_anchor, text="Enable auto alignment", variable=auto_align_var,
                                     command=toggle_auto_align)
     chk_auto_align.pack(anchor="w", padx=5, pady=(5, 0))
+
+    anchor_overlay_var = tk.BooleanVar(value=anchor_overlay_visible)
+    chk_anchor_overlay = tk.Checkbutton(
+        frm_anchor,
+        text="Show anchor overlay",
+        variable=anchor_overlay_var,
+        command=toggle_anchor_overlay_visibility,
+    )
+    chk_anchor_overlay.pack(anchor="w", padx=5, pady=(0, 5))
 
     threshold_row = ttk.Frame(frm_anchor)
     threshold_row.pack(fill="x", padx=5, pady=5)
