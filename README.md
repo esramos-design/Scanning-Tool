@@ -86,11 +86,50 @@ Since this tool runs alongside Star Citizen, you'll need:
 
 **This tool needs "Ollama" to read the deposit codes with AI.**
 
-**How to install Ollama:**
-1. Go to **https://ollama.com/** in your web browser
-2. Click the **download button for Windows** (or Linux if you use Linux)
-3. **Run the installer** - just click "Next" through everything
-4. **Restart your computer** when it's done
+You can run Ollama on the same computer as the game **or** on a different machine on your local network. The scanner supports both setups—choose the one that best fits your hardware.
+
+#### Option A: Ollama and the scanner on the same PC (default)
+1. Go to **https://ollama.com/** in your web browser.
+2. Click the **download button for Windows** (or Linux if you use Linux).
+3. **Run the installer** and follow the prompts.
+4. **Restart your computer** when it's done (Windows) or log out/in (Linux) so the Ollama service starts.
+
+This is the simplest approach. After the installer finishes, start the scanner normally (`launch_windows.bat` or `./launch_linux.sh`) and it will talk to the Ollama service that is already running on `http://127.0.0.1:11434`.
+- No extra configuration is required—the scanner falls back to `http://127.0.0.1:11434` automatically when `OLLAMA_HOST` is not set.
+
+#### Option B: Run Ollama on another PC on your LAN
+Use this if you want to keep the heavy AI workload off your gaming rig. You will set up two machines:
+
+**1. AI / Ollama PC**
+
+- Install Ollama from **https://ollama.com/** (Windows or Linux).
+- Allow it to listen on the network:
+  - **Windows (PowerShell):**
+    ```powershell
+    setx OLLAMA_HOST "0.0.0.0"
+    Stop-Service Ollama
+    Start-Service Ollama
+    ```
+  - **Linux:** add `OLLAMA_HOST=0.0.0.0` to `/etc/systemd/system/ollama.service` or `~/.ollama/config` (create it if it doesn't exist) and restart with `sudo systemctl restart ollama`.
+- Ensure port **11434** is allowed through the firewall so the gaming PC can connect.
+- (Optional) Test locally with `curl http://127.0.0.1:11434/api/tags`.
+
+**2. Gaming / Scanner PC**
+
+- Make sure both PCs are on the same network and note the LAN IP of the Ollama PC (for example `192.168.1.42`).
+- Set the `OLLAMA_HOST` environment variable before launching the scanner so it knows where to send requests:
+  - **Windows (PowerShell):** `setx OLLAMA_HOST "http://192.168.1.42:11434"`
+  - **Windows (Command Prompt - temporary for this session):** `set OLLAMA_HOST=http://192.168.1.42:11434`
+  - **Linux (temporary):** `export OLLAMA_HOST=http://192.168.1.42:11434`
+  - **Linux (persistent):** add the export line to your shell profile (e.g. `~/.bashrc`).
+- Launch the scanner (`launch_windows.bat` or `./launch_linux.sh`). It will use the remote Ollama instance automatically.
+- The scanner detects that you're using a remote host and skips the local installer prompt. You'll see log messages confirming the remote address and whether the model is present on that machine.
+
+**Troubleshooting remote mode**
+
+- Verify you can reach the Ollama PC from the gaming PC with `curl http://192.168.1.42:11434/api/tags`.
+- Double-check firewalls and that the Ollama service is running.
+- If you switch back to the single-PC setup, clear the environment variable (`setx OLLAMA_HOST ""` on Windows or remove the export line on Linux) so the scanner defaults to `127.0.0.1` again.
 
 > 💡 **Don't worry!** If you forget to install Ollama, the scanner tool will remind you and even open the website for you.
 

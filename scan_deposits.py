@@ -6,6 +6,7 @@ import base64
 import os
 import sys
 import socket
+from urllib.parse import urlparse
 from pathlib import Path
 from threading import Thread
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -328,14 +329,19 @@ def show_installation_message(system_name: str) -> None:
 
 def ensure_ollama_installed():
     """
-    Check if Ollama is installed on the system (cross-platform).
-    If not found, offer OS-specific installation options.
-    Works on Windows and Linux.
+    Check if Ollama is installed locally when required.
+    If a remote host is configured, skip the local installation prompts.
     """
+
+    host = get_ollama_host()
+    if not is_local_ollama_host(host):
+        logger.info(f"Using remote Ollama host at {host}; skipping local installation check.")
+        return
+
     if not shutil.which("ollama"):
         import platform
         system = platform.system().lower()
-        
+
         logger.info("Ollama not found on your system.")
         logger.info("Ollama is required for AI-powered code recognition.")
         logger.info("")
@@ -443,17 +449,41 @@ def ensure_ollama_installed():
             sys.exit("Please install Ollama and rerun this program.")
 
 def ensure_model_installed(model="qwen2.5vl:3b"):
-    """Ensure the Ollama model is pulled locally."""
+    """Ensure the Ollama model exists on the configured host."""
+
+    host = get_ollama_host()
+    host_mode = "local" if is_local_ollama_host(host) else "remote"
+    logger.info(f"Using {host_mode} Ollama host at {host}.")
+
     try:
-        result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
-        if model not in result.stdout:
-            logger.info(f"Model {model} not found. Pulling now...")
-            subprocess.run(["ollama", "pull", model], check=True)
-            logger.info(f"Model {model} installed successfully.")
-        else:
-            logger.info(f"Model {model} already installed.")
+        response = ollama.list()
+        available_models = {
+            getattr(m, "model")
+            for m in getattr(response, "models", [])
+            if getattr(m, "model", None)
+        }
     except Exception as e:
-        logger.error(f"Error ensuring model: {e}")
+        logger.error(f"Unable to communicate with Ollama at {host}: {e}")
+        guidance = (
+            "Make sure the Ollama service is running on this PC."
+            if host_mode == "local"
+            else f"Ensure the Ollama server at {host} is reachable from this machine."
+        )
+        sys.exit(guidance)
+
+    if model in available_models:
+        logger.info(f"Model {model} already available on Ollama host {host}.")
+        return
+
+    logger.info(f"Model {model} not found on Ollama host {host}. Pulling now...")
+    try:
+        progress = ollama.pull(model)
+        status = getattr(progress, "status", None)
+        if status:
+            logger.info(f"Ollama pull status: {status}")
+        logger.info(f"Model {model} installed successfully on {host}.")
+    except Exception as e:
+        logger.error(f"Error ensuring model {model} on {host}: {e}")
         sys.exit("Failed to ensure Ollama model.")
 
 
@@ -474,6 +504,37 @@ label_color = "yellow"
 MIN_CONFIDENCE = 0.65
 DEBUG_SHOW_OVERLAY = True
 OLLAMA_MODEL = "qwen2.5vl:3b"   # vision model
+DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
+
+
+def get_ollama_host() -> str:
+    """Return the Ollama host configured via environment variable or the default."""
+
+    env_host = os.getenv("OLLAMA_HOST", "").strip()
+    return env_host or DEFAULT_OLLAMA_HOST
+
+
+def _normalize_for_parse(host: str) -> str:
+    return host if "://" in host else f"http://{host}"
+
+
+def is_local_ollama_host(host: str) -> bool:
+    """Determine if the given host string refers to the local machine."""
+
+    try:
+        parsed = urlparse(_normalize_for_parse(host))
+    except Exception:
+        return True
+
+    hostname = (parsed.hostname or "").strip().lower()
+
+    if not hostname or hostname in {"localhost", "0.0.0.0", "127.0.0.1", "::1"}:
+        return True
+
+    if hostname.startswith("127."):
+        return True
+
+    return False
 
 # Regex for codes
 CODE_RE = re.compile(
