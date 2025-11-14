@@ -5,6 +5,7 @@ import io
 import base64
 import os
 import sys
+import socket
 from pathlib import Path
 from threading import Thread
 from typing import Dict, List, Optional, Tuple
@@ -1579,6 +1580,20 @@ def continuous_scan_loop():
 
 
 
+# ---------- Network helpers ----------
+def get_local_ip() -> str:
+    """Best-effort detection of the primary local network IP address."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            ip_address = sock.getsockname()[0]
+            if ip_address:
+                return ip_address
+    except Exception as exc:
+        logger.debug(f"Unable to determine local IP automatically: {exc}")
+    return "127.0.0.1"
+
+
 # ---------- Flask / Hotkeys ----------
 template_folder = resource_path("templates")
 app = Flask(__name__, template_folder=template_folder)
@@ -1644,5 +1659,10 @@ if __name__ == "__main__":
     load_config()
     anchor_tracker = AnchorRegionTracker(ANCHOR_TEMPLATE_DIR, ANCHOR_THRESHOLD)
     Thread(target=hotkey_listener, daemon=True).start()
-    Thread(target=lambda: app.run(host="127.0.0.1", port=5000, debug=False), daemon=True).start()
+    local_ip = get_local_ip()
+    logger.info(
+        "Starting overlay server: http://127.0.0.1:5000 (this device) | "
+        f"http://{local_ip}:5000 (local network)"
+    )
+    Thread(target=lambda: app.run(host="0.0.0.0", port=5000, debug=False), daemon=True).start()
     launch_gui()
