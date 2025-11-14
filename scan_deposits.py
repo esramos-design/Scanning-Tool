@@ -5,6 +5,7 @@ import io
 import base64
 import os
 import sys
+import socket
 from pathlib import Path
 from threading import Thread
 from typing import Dict, List, Optional, Tuple
@@ -1579,6 +1580,20 @@ def continuous_scan_loop():
 
 
 
+# ---------- Network helpers ----------
+def get_local_ip() -> str:
+    """Best-effort detection of the primary local network IP address."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            ip_address = sock.getsockname()[0]
+            if ip_address:
+                return ip_address
+    except Exception as exc:
+        logger.debug(f"Unable to determine local IP automatically: {exc}")
+    return "127.0.0.1"
+
+
 # ---------- Flask / Hotkeys ----------
 template_folder = resource_path("templates")
 app = Flask(__name__, template_folder=template_folder)
@@ -1591,12 +1606,35 @@ def index():
 
 @app.route("/status")
 def status():
-    return jsonify({
+    """Return the latest scan information for the overlay UI."""
+
+    selected_region = request.args.get("region", "STANTON").upper()
+    result = last_result or {}
+    info = result.get("info") if isinstance(result, dict) else None
+
+    table = None
+    if info:
+        deposit_key = (info.get("key") or info.get("name") or "").upper()
+        region_tables = DEPOSIT_TABLES.get(selected_region, {})
+        table = region_tables.get(deposit_key)
+
+    response = {
+        # Legacy keys kept for compatibility with any external tools.
         "region": CAP_REGION,
         "label_color": label_color,
         "last": last_result,
         "alignment": last_alignment_info,
-    })
+        # Data consumed by the overlay web page.
+        "selected_region": selected_region,
+        "info": info,
+        "code": result.get("code") if isinstance(result, dict) else None,
+        "code_raw": result.get("code_raw") if isinstance(result, dict) else None,
+        "confidence": float(result.get("confidence", 0.0)) if isinstance(result, dict) else 0.0,
+        "raw_text": result.get("raw_text") if isinstance(result, dict) else None,
+        "table": table,
+    }
+
+    return jsonify(response)
 
 
 def hotkey_listener():
@@ -1621,5 +1659,10 @@ if __name__ == "__main__":
     load_config()
     anchor_tracker = AnchorRegionTracker(ANCHOR_TEMPLATE_DIR, ANCHOR_THRESHOLD)
     Thread(target=hotkey_listener, daemon=True).start()
-    Thread(target=lambda: app.run(host="127.0.0.1", port=5000, debug=False), daemon=True).start()
+    local_ip = get_local_ip()
+    logger.info(
+        "Starting overlay server: http://127.0.0.1:5000 (this device) | "
+        f"http://{local_ip}:5000 (local network)"
+    )
+    Thread(target=lambda: app.run(host="0.0.0.0", port=5000, debug=False), daemon=True).start()
     launch_gui()
