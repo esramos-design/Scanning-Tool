@@ -547,12 +547,17 @@ def lookup_deposit(code: str):
 continuous_mode = False
 show_border = True
 border_canvas = None
-overlay_canvas = None
-overlay_text_id = None
+
+capture_overlay_root = None
+capture_overlay_canvas = None
+capture_rect_id = None
+
+info_overlay_root = None
+info_overlay_canvas = None
+info_text_id = None
 overlay_text = ""
 last_overlay_time = 0
-root_overlay = None
-capture_rect_id = None
+
 anchor_overlay_root = None
 anchor_overlay_canvas = None
 anchor_rect_id = None
@@ -599,10 +604,10 @@ def perform_auto_alignment() -> bool:
         "match_top": detection["match_top"],
     })
 
-    if root_overlay:
+    if capture_overlay_root:
         try:
-            root_overlay.after(0, update_capture_overlay_region)
-        except RuntimeError:
+            capture_overlay_root.after(0, update_capture_overlay_region)
+        except (RuntimeError, tk.TclError):
             update_capture_overlay_region()
 
     logger.debug(
@@ -623,24 +628,36 @@ def toggle_border():
         border_canvas.itemconfig("border", state="normal" if show_border else "hidden")
 
 
-def update_overlay_label(info):
-    """Update the overlay label with deposit info and reset timeout timer."""
-    global overlay_text, overlay_text_id, overlay_canvas, last_overlay_time
+def update_overlay_label(info, *, code: Optional[str] = None, raw_text: Optional[str] = None) -> None:
+    """Update the floating label with the latest scan result."""
+    global overlay_text, info_overlay_canvas, info_text_id, last_overlay_time
+
+    message = ""
     if info:
-        overlay_text = f"{info['name']} x{info['deposits']}" if "deposits" in info else info["name"]
+        message = f"{info['name']} x{info['deposits']}" if "deposits" in info else info["name"]
+    elif code:
+        message = code
+    elif raw_text:
+        message = raw_text
+
+    overlay_text = message
+    if message:
         last_overlay_time = time.time()
-        if overlay_canvas and overlay_text_id:
-            overlay_canvas.itemconfig(overlay_text_id, text=overlay_text, fill=label_color)
+    if info_overlay_canvas and info_text_id:
+        info_overlay_canvas.itemconfig(info_text_id, text=overlay_text, fill=label_color)
 
 
-def start_label_timeout(root):
+def start_label_timeout(window: Optional[tk.Toplevel]) -> None:
     """Background loop to clear overlay label if no update for 10s."""
-    global overlay_text_id, overlay_canvas, last_overlay_time
-    if overlay_canvas and overlay_text_id:
+    global info_overlay_canvas, info_text_id, last_overlay_time
+
+    if info_overlay_canvas and info_text_id:
         if last_overlay_time and (time.time() - last_overlay_time > 10):
-            overlay_canvas.itemconfig(overlay_text_id, text="")
+            info_overlay_canvas.itemconfig(info_text_id, text="")
             last_overlay_time = 0
-    root.after(500, lambda: start_label_timeout(root))
+
+    if window and window.winfo_exists():
+        window.after(500, lambda: start_label_timeout(window))
 
 
 
@@ -673,24 +690,23 @@ def create_overlay_window(width: int, height: int, left: int, top: int) -> tk.To
 
 # ---------- GUI + Overlay ----------
 def choose_label_color():
-    global label_color, overlay_canvas, overlay_text_id
+    global label_color, info_overlay_canvas, info_text_id
     color = colorchooser.askcolor(title="Choose Label Color")[1]
     if color:
         label_color = color
-        if overlay_canvas and overlay_text_id:
-            overlay_canvas.itemconfig(overlay_text_id, fill=label_color)
+        if info_overlay_canvas and info_text_id:
+            info_overlay_canvas.itemconfig(info_text_id, fill=label_color)
 
 
 def show_capture_overlay():
-    global border_canvas, overlay_canvas, overlay_text_id, root_overlay, capture_rect_id
+    global border_canvas, capture_overlay_canvas, capture_overlay_root, capture_rect_id
 
-    if root_overlay and root_overlay.winfo_exists():
+    if capture_overlay_root and capture_overlay_root.winfo_exists():
         try:
-            root_overlay.destroy()
+            capture_overlay_root.destroy()
         except tk.TclError:
             pass
-        overlay_canvas = None
-        overlay_text_id = None
+        capture_overlay_canvas = None
         capture_rect_id = None
         border_canvas = None
 
@@ -702,19 +718,19 @@ def show_capture_overlay():
     left = int(CAP_REGION['left']) - (padding_x // 2)
     top = int(CAP_REGION['top']) - padding_y
 
-    root_overlay = create_overlay_window(overlay_width, overlay_height, left, top)
+    capture_overlay_root = create_overlay_window(overlay_width, overlay_height, left, top)
 
-    overlay_canvas = tk.Canvas(
-        root_overlay,
+    capture_overlay_canvas = tk.Canvas(
+        capture_overlay_root,
         width=overlay_width,
         height=overlay_height,
         bg="black",
         highlightthickness=0,
     )
-    overlay_canvas.pack()
-    border_canvas = overlay_canvas
+    capture_overlay_canvas.pack()
+    border_canvas = capture_overlay_canvas
 
-    capture_rect_id = overlay_canvas.create_rectangle(
+    capture_rect_id = capture_overlay_canvas.create_rectangle(
         padding_x // 2,
         padding_y,
         padding_x // 2 + cap_w,
@@ -724,21 +740,51 @@ def show_capture_overlay():
         tags=("border",),
     )
 
-    overlay_text_id = overlay_canvas.create_text(
-        overlay_width // 2,
-        5,
-        text="",
-        fill=label_color,
-        font=("Arial", 14, "bold"),
-        width=overlay_width - 20,
-        anchor="n",
+
+def show_info_overlay(screen_width: int, screen_height: int) -> None:
+    """Display a floating status overlay near the top-center of the screen."""
+    global info_overlay_root, info_overlay_canvas, info_text_id
+
+    if info_overlay_root and info_overlay_root.winfo_exists():
+        try:
+            info_overlay_root.destroy()
+        except tk.TclError:
+            pass
+        info_overlay_canvas = None
+        info_text_id = None
+
+    overlay_width = max(400, min(800, screen_width - 40))
+    overlay_height = 120
+    left = max(0, (screen_width - overlay_width) // 2)
+    top = max(0, int(screen_height * 0.35) - overlay_height // 2)
+
+    info_overlay_root = create_overlay_window(overlay_width, overlay_height, left, top)
+
+    info_overlay_canvas = tk.Canvas(
+        info_overlay_root,
+        width=overlay_width,
+        height=overlay_height,
+        bg="black",
+        highlightthickness=0,
     )
-    start_label_timeout(root_overlay)
+    info_overlay_canvas.pack()
+
+    info_text_id = info_overlay_canvas.create_text(
+        overlay_width // 2,
+        overlay_height // 2,
+        text=overlay_text,
+        fill=label_color,
+        font=("Arial", 18, "bold"),
+        width=overlay_width - 60,
+        justify="center",
+    )
+
+    start_label_timeout(info_overlay_root)
 
 
 def update_capture_overlay_region():
-    global overlay_canvas, capture_rect_id, root_overlay
-    if not overlay_canvas or not capture_rect_id or not root_overlay:
+    global capture_overlay_canvas, capture_rect_id, capture_overlay_root
+    if not capture_overlay_canvas or not capture_rect_id or not capture_overlay_root:
         return
     cap_w, cap_h = int(CAP_REGION['width']), int(CAP_REGION['height'])
     padding_x, padding_y = 100, 40
@@ -747,18 +793,18 @@ def update_capture_overlay_region():
     left = int(CAP_REGION['left']) - (padding_x // 2)
     top = int(CAP_REGION['top']) - padding_y
 
-    overlay_canvas.config(width=overlay_width, height=overlay_height)
+    capture_overlay_canvas.config(width=overlay_width, height=overlay_height)
 
-    overlay_canvas.coords(
+    capture_overlay_canvas.coords(
         capture_rect_id,
         padding_x // 2,
         padding_y,
         padding_x // 2 + cap_w,
         padding_y + cap_h,
     )
-    root_overlay.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
+    capture_overlay_root.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
     try:
-        root_overlay.lift()
+        capture_overlay_root.lift()
     except tk.TclError:
         pass
 
@@ -859,9 +905,21 @@ def hide_anchor_overlay():
     anchor_rect_id = None
 
 
-def show_overlay():
+def show_overlay(screen_width: Optional[int] = None, screen_height: Optional[int] = None) -> None:
     show_anchor_overlay()
     show_capture_overlay()
+
+    if screen_width is None or screen_height is None:
+        try:
+            if capture_overlay_root and capture_overlay_root.winfo_exists():
+                screen_width = capture_overlay_root.winfo_screenwidth()
+                screen_height = capture_overlay_root.winfo_screenheight()
+        except tk.TclError:
+            screen_width = screen_width or 1920
+            screen_height = screen_height or 1080
+
+    if screen_width is not None and screen_height is not None:
+        show_info_overlay(screen_width, screen_height)
 
 
 def update_overlay_region():
@@ -883,7 +941,7 @@ def launch_gui():
         ANCHOR_REGION["top"] = int(anchor_top.get())
         ANCHOR_REGION["width"] = int(anchor_width.get())
         ANCHOR_REGION["height"] = int(anchor_height.get())
-        anchor_status_var.set(f"Anchor region updated: {ANCHOR_REGION}")
+        set_anchor_status(f"Anchor region updated: {ANCHOR_REGION}", hold=2.0)
         if AUTO_ALIGN_ENABLED:
             perform_auto_alignment()
         update_anchor_overlay_region()
@@ -891,7 +949,7 @@ def launch_gui():
     def update_anchor_offset_from_sliders(*args):
         ANCHOR_OFFSET["x"] = int(anchor_offset_x.get())
         ANCHOR_OFFSET["y"] = int(anchor_offset_y.get())
-        anchor_status_var.set(f"Anchor offset updated: {ANCHOR_OFFSET}")
+        set_anchor_status(f"Anchor offset updated: {ANCHOR_OFFSET}", hold=2.0)
         if AUTO_ALIGN_ENABLED:
             perform_auto_alignment()
 
@@ -899,9 +957,11 @@ def launch_gui():
         global AUTO_ALIGN_ENABLED
         AUTO_ALIGN_ENABLED = auto_align_var.get()
         last_alignment_info["enabled"] = AUTO_ALIGN_ENABLED
-        anchor_status_var.set(
-            "Head sway compensation enabled." if AUTO_ALIGN_ENABLED else "Head sway compensation disabled."
-        )
+        if AUTO_ALIGN_ENABLED:
+            set_anchor_status("Head sway compensation enabled.")
+            perform_auto_alignment()
+        else:
+            set_anchor_status("Head sway compensation disabled.")
 
     def reload_anchor_templates():
         global anchor_tracker
@@ -909,17 +969,18 @@ def launch_gui():
         if anchor_tracker is None:
             anchor_tracker = AnchorRegionTracker(ANCHOR_TEMPLATE_DIR, ANCHOR_THRESHOLD)
         count = anchor_tracker.set_directory(ANCHOR_TEMPLATE_DIR)
-        anchor_status_var.set(f"Loaded {count} anchor template(s) from {ANCHOR_TEMPLATE_DIR}.")
+        set_anchor_status(f"Loaded {count} anchor template(s) from {ANCHOR_TEMPLATE_DIR}.")
 
     def manual_realign():
         success = perform_auto_alignment()
         if success:
-            anchor_status_var.set(
-                f"Anchor locked using {last_alignment_info['template']} (score {last_alignment_info['score']:.2f})."
+            set_anchor_status(
+                f"Anchor locked using {last_alignment_info['template']} (score {last_alignment_info['score']:.2f}).",
+                hold=2.5,
             )
             status_var.set(f"Auto alignment adjusted CAP_REGION: {CAP_REGION}")
         else:
-            anchor_status_var.set("Anchor match not found. Adjust search region or add templates.")
+            set_anchor_status("Anchor match not found. Adjust search region or add templates.")
 
     def open_anchor_directory():
         path = os.path.abspath(ANCHOR_TEMPLATE_DIR)
@@ -932,9 +993,9 @@ def launch_gui():
             else:
                 subprocess.Popen(["xdg-open", path])
         except Exception as exc:
-            anchor_status_var.set(f"Unable to open template folder: {exc}")
+            set_anchor_status(f"Unable to open template folder: {exc}", hold=3.0)
         else:
-            anchor_status_var.set(f"Opened template folder: {path}")
+            set_anchor_status(f"Opened template folder: {path}")
 
     def update_threshold(*_args):
         global ANCHOR_THRESHOLD
@@ -946,28 +1007,88 @@ def launch_gui():
         ANCHOR_THRESHOLD = value
         if anchor_tracker is not None:
             anchor_tracker.set_threshold(ANCHOR_THRESHOLD)
-        anchor_status_var.set(f"Anchor detection threshold set to {ANCHOR_THRESHOLD:.2f}")
+        set_anchor_status(f"Anchor detection threshold set to {ANCHOR_THRESHOLD:.2f}")
 
     def toggle_anchor_overlay_visibility():
         global anchor_overlay_visible
         anchor_overlay_visible = anchor_overlay_var.get()
         if anchor_overlay_visible:
             show_anchor_overlay()
+            set_anchor_status("Anchor overlay shown.")
         else:
             hide_anchor_overlay()
+            set_anchor_status("Anchor overlay hidden.")
+
+    def alignment_poll():
+        now = time.time()
+        message: Optional[str] = None
+
+        if AUTO_ALIGN_ENABLED:
+            if anchor_tracker is None or not getattr(anchor_tracker, "templates", None):
+                message = "Add anchor templates to enable head sway compensation."
+                last_alignment_info.update(
+                    {
+                        "matched": False,
+                        "template": None,
+                        "score": 0.0,
+                        "match_left": None,
+                        "match_top": None,
+                    }
+                )
+            else:
+                match_found = perform_auto_alignment()
+                info = last_alignment_info
+                if info.get("matched"):
+                    message = (
+                        f"Anchor locked using {info['template']} (score {info['score']:.2f})."
+                    )
+                elif not match_found:
+                    message = "Anchor match not found. Adjust search region or add templates."
+        else:
+            message = "Head sway compensation disabled."
+            last_alignment_info.update(
+                {
+                    "matched": False,
+                    "template": None,
+                    "score": 0.0,
+                    "match_left": None,
+                    "match_top": None,
+                }
+            )
+
+        if message and now >= anchor_status_hold["until"]:
+            if message != alignment_status_cache.get("message") or anchor_status_var.get() != message:
+                anchor_status_var.set(message)
+                alignment_status_cache["message"] = message
+
+        try:
+            root.after(500, alignment_poll)
+        except tk.TclError:
+            pass
 
     def on_close():
-        global root_overlay, anchor_overlay_root
+        global capture_overlay_root, capture_overlay_canvas, capture_rect_id
+        global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id
+        global info_overlay_root, info_overlay_canvas, info_text_id
+
         save_config()
         try:
-            if root_overlay:
-                root_overlay.destroy()
-                root_overlay = None
-            if anchor_overlay_root:
-                anchor_overlay_root.destroy()
-                anchor_overlay_root = None
+            for window in (capture_overlay_root, anchor_overlay_root, info_overlay_root):
+                if window and window.winfo_exists():
+                    window.destroy()
         except Exception:
             pass
+
+        capture_overlay_root = None
+        capture_overlay_canvas = None
+        capture_rect_id = None
+        anchor_overlay_root = None
+        anchor_overlay_canvas = None
+        anchor_rect_id = None
+        info_overlay_root = None
+        info_overlay_canvas = None
+        info_text_id = None
+
         root.destroy()
 
     root = tk.Tk()
@@ -976,6 +1097,14 @@ def launch_gui():
 
     status_var = tk.StringVar(value="Ready.")
     anchor_status_var = tk.StringVar(value="Head sway compensation ready.")
+
+    alignment_status_cache = {"message": None}
+    anchor_status_hold = {"until": 0.0}
+
+    def set_anchor_status(message: str, hold: float = 1.5) -> None:
+        anchor_status_var.set(message)
+        anchor_status_hold["until"] = time.time() + hold
+        alignment_status_cache["message"] = None
 
     frm_region = ttk.LabelFrame(root, text="Capture Region")
     frm_region.pack(fill="x", padx=5, pady=5)
@@ -1077,7 +1206,9 @@ def launch_gui():
         fill="x", padx=5, pady=(0, 5)
     )
 
-    show_overlay()
+    root.update_idletasks()
+    show_overlay(root.winfo_screenwidth(), root.winfo_screenheight())
+    alignment_poll()
     root.mainloop()
 
 
@@ -1103,7 +1234,7 @@ def capture_once():
     info = lookup_deposit(code)
 
     last_result = {"code": code, "code_raw": raw, "info": info, "raw_text": raw_text}
-    update_overlay_label(info)
+    update_overlay_label(info, code=code, raw_text=raw or raw_text)
     logger.info(f"Scan result: {last_result}")
 
 
