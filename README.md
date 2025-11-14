@@ -155,9 +155,13 @@ Tips:
 
 ### Reading the results
 
-- The tool will show **deposit type and quantity** above the red box
+- The tool shows **deposit type and quantity** in the floating overlay near the top of the
+  screen. Use the **Display offset X/Y** sliders in the **Result Display** panel if you need
+  to nudge that overlay around.
+- Only recognised deposits from the bundled database are rendered; random OCR numbers are
+  ignored so the overlay stays clean until a valid match is found.
 - **Green text** = High-value materials (like Quantanium, Gold)
-- **Yellow text** = Medium-value materials  
+- **Yellow text** = Medium-value materials
 - **Orange text** = Lower-value materials
 
 ## 🛠️ If something goes wrong

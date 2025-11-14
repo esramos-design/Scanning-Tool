@@ -20,5 +20,9 @@
     "ANCHOR_THRESHOLD": 0.82,
     "ANCHOR_TEMPLATE_DIR": "assets/anchor_templates",
     "ALIGNMENT_POLL_INTERVAL_MS": 500,
-    "CONTINUOUS_CAPTURE_INTERVAL": 2.0
+    "CONTINUOUS_CAPTURE_INTERVAL": 2.0,
+    "INFO_OVERLAY_OFFSET": {
+        "x": 0,
+        "y": 0
+    }
 }

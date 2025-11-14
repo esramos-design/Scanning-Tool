@@ -224,6 +224,7 @@ AUTO_ALIGN_ENABLED = True
 ANCHOR_TEMPLATE_DIR = "assets/anchor_templates"
 ALIGNMENT_POLL_INTERVAL_MS = 500
 CONTINUOUS_CAPTURE_INTERVAL = 2.0
+INFO_OVERLAY_OFFSET = {"x": 0, "y": 0}
 label_color = "yellow"
 MIN_CONFIDENCE = 0.65
 DEBUG_SHOW_OVERLAY = True
@@ -252,7 +253,8 @@ last_alignment_info = {
 GUI_CONTROL_STATE = {
     "capture": {"left": None, "top": None, "width": None, "height": None},
     "anchor": {"left": None, "top": None, "width": None, "height": None, "offset_x": None, "offset_y": None},
-    "syncing": {"capture": False, "anchor": False},
+    "overlay": {"offset_x": None, "offset_y": None},
+    "syncing": {"capture": False, "anchor": False, "overlay": False},
 }
 
 
@@ -281,6 +283,10 @@ def register_anchor_sliders(
         "offset_x": offset_x,
         "offset_y": offset_y,
     })
+
+
+def register_overlay_sliders(offset_x: tk.Scale, offset_y: tk.Scale) -> None:
+    GUI_CONTROL_STATE["overlay"].update({"offset_x": offset_x, "offset_y": offset_y})
 
 
 def sync_capture_sliders() -> None:
@@ -338,6 +344,29 @@ def sync_anchor_sliders() -> None:
                 pass
         finally:
             state["syncing"]["anchor"] = False
+
+
+def sync_overlay_sliders() -> None:
+    state = GUI_CONTROL_STATE
+    widgets = state["overlay"]
+    widget = widgets["offset_x"]
+    if not widget:
+        return
+    if state["syncing"]["overlay"]:
+        return
+
+    def _apply() -> None:
+        if state["syncing"]["overlay"]:
+            return
+        state["syncing"]["overlay"] = True
+        try:
+            try:
+                widgets["offset_x"].set(int(INFO_OVERLAY_OFFSET["x"]))
+                widgets["offset_y"].set(int(INFO_OVERLAY_OFFSET["y"]))
+            except tk.TclError:
+                pass
+        finally:
+            state["syncing"]["overlay"] = False
 
     try:
         widget.after(0, _apply)
@@ -465,7 +494,7 @@ anchor_tracker: Optional[AnchorRegionTracker] = None
 
 def load_config():
     global CAP_REGION, label_color, AUTO_ALIGN_ENABLED, ANCHOR_REGION, ANCHOR_OFFSET, ANCHOR_THRESHOLD, ANCHOR_TEMPLATE_DIR
-    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL
+    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL, INFO_OVERLAY_OFFSET
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
@@ -479,6 +508,7 @@ def load_config():
                 ANCHOR_TEMPLATE_DIR = data.get("ANCHOR_TEMPLATE_DIR", ANCHOR_TEMPLATE_DIR)
                 ALIGNMENT_POLL_INTERVAL_MS = data.get("ALIGNMENT_POLL_INTERVAL_MS", ALIGNMENT_POLL_INTERVAL_MS)
                 CONTINUOUS_CAPTURE_INTERVAL = data.get("CONTINUOUS_CAPTURE_INTERVAL", CONTINUOUS_CAPTURE_INTERVAL)
+                INFO_OVERLAY_OFFSET = data.get("INFO_OVERLAY_OFFSET", INFO_OVERLAY_OFFSET)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Config file invalid or empty, resetting: {e}")
             save_config()
@@ -492,7 +522,7 @@ def load_config():
 
 def save_config():
     global CAP_REGION, label_color, AUTO_ALIGN_ENABLED, ANCHOR_REGION, ANCHOR_OFFSET, ANCHOR_THRESHOLD, ANCHOR_TEMPLATE_DIR
-    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL
+    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL, INFO_OVERLAY_OFFSET
     data = {
         "CAP_REGION": CAP_REGION,
         "label_color": label_color,
@@ -503,6 +533,7 @@ def save_config():
         "ANCHOR_TEMPLATE_DIR": ANCHOR_TEMPLATE_DIR,
         "ALIGNMENT_POLL_INTERVAL_MS": ALIGNMENT_POLL_INTERVAL_MS,
         "CONTINUOUS_CAPTURE_INTERVAL": CONTINUOUS_CAPTURE_INTERVAL,
+        "INFO_OVERLAY_OFFSET": INFO_OVERLAY_OFFSET,
     }
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
@@ -661,6 +692,7 @@ capture_rect_id = None
 info_overlay_root = None
 info_overlay_canvas = None
 info_text_id = None
+info_overlay_geometry = {"screen_width": None, "screen_height": None, "width": 0, "height": 0}
 overlay_text = ""
 last_overlay_time = 0
 
@@ -752,16 +784,63 @@ def update_overlay_label(info, *, code: Optional[str] = None, raw_text: Optional
     message = ""
     if info:
         message = f"{info['name']} x{info['deposits']}" if "deposits" in info else info["name"]
-    elif code:
-        message = code
-    elif raw_text:
-        message = raw_text
 
     overlay_text = message
     if message:
         last_overlay_time = time.time()
+    else:
+        last_overlay_time = 0
     if info_overlay_canvas and info_text_id:
         info_overlay_canvas.itemconfig(info_text_id, text=overlay_text, fill=label_color)
+
+
+def compute_info_overlay_geometry(screen_width: int, screen_height: int) -> Tuple[int, int, int, int]:
+    overlay_width = max(400, min(800, screen_width - 40))
+    overlay_height = 120
+    base_left = max(0, (screen_width - overlay_width) // 2)
+    base_top = max(0, int(screen_height * 0.35) - overlay_height // 2)
+
+    offset_x = int(INFO_OVERLAY_OFFSET.get("x", 0))
+    offset_y = int(INFO_OVERLAY_OFFSET.get("y", 0))
+
+    max_left = max(0, screen_width - overlay_width)
+    max_top = max(0, screen_height - overlay_height)
+
+    left = min(max(0, base_left + offset_x), max_left)
+    top = min(max(0, base_top + offset_y), max_top)
+    return overlay_width, overlay_height, left, top
+
+
+def reposition_info_overlay() -> None:
+    global info_overlay_canvas, info_text_id
+    if not info_overlay_root or not info_overlay_canvas or not info_text_id:
+        return
+    if not info_overlay_root.winfo_exists():
+        return
+
+    try:
+        screen_width = info_overlay_root.winfo_screenwidth()
+        screen_height = info_overlay_root.winfo_screenheight()
+    except tk.TclError:
+        geo = info_overlay_geometry
+        screen_width = geo.get("screen_width") or 1920
+        screen_height = geo.get("screen_height") or 1080
+
+    overlay_width, overlay_height, left, top = compute_info_overlay_geometry(screen_width, screen_height)
+
+    info_overlay_root.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
+    info_overlay_canvas.config(width=overlay_width, height=overlay_height)
+    info_overlay_canvas.coords(info_text_id, overlay_width // 2, overlay_height // 2)
+    info_overlay_canvas.itemconfig(info_text_id, width=overlay_width - 60)
+
+    info_overlay_geometry.update(
+        {
+            "screen_width": screen_width,
+            "screen_height": screen_height,
+            "width": overlay_width,
+            "height": overlay_height,
+        }
+    )
 
 
 def start_label_timeout(window: Optional[tk.Toplevel]) -> None:
@@ -870,10 +949,7 @@ def show_info_overlay(screen_width: int, screen_height: int) -> None:
         info_overlay_canvas = None
         info_text_id = None
 
-    overlay_width = max(400, min(800, screen_width - 40))
-    overlay_height = 120
-    left = max(0, (screen_width - overlay_width) // 2)
-    top = max(0, int(screen_height * 0.35) - overlay_height // 2)
+    overlay_width, overlay_height, left, top = compute_info_overlay_geometry(screen_width, screen_height)
 
     info_overlay_root = create_overlay_window(overlay_width, overlay_height, left, top)
 
@@ -894,6 +970,15 @@ def show_info_overlay(screen_width: int, screen_height: int) -> None:
         font=("Arial", 18, "bold"),
         width=overlay_width - 60,
         justify="center",
+    )
+
+    info_overlay_geometry.update(
+        {
+            "screen_width": screen_width,
+            "screen_height": screen_height,
+            "width": overlay_width,
+            "height": overlay_height,
+        }
     )
 
     start_label_timeout(info_overlay_root)
@@ -1075,6 +1160,16 @@ def launch_gui():
         set_anchor_status(f"Anchor offset updated: {ANCHOR_OFFSET}", hold=2.0)
         if AUTO_ALIGN_ENABLED:
             perform_auto_alignment()
+
+    def update_info_overlay_from_sliders(*args):
+        if GUI_CONTROL_STATE["syncing"].get("overlay"):
+            return
+        INFO_OVERLAY_OFFSET["x"] = int(info_offset_x.get())
+        INFO_OVERLAY_OFFSET["y"] = int(info_offset_y.get())
+        status_var.set(
+            f"Display offset updated: x={INFO_OVERLAY_OFFSET['x']}, y={INFO_OVERLAY_OFFSET['y']}"
+        )
+        reposition_info_overlay()
 
     def toggle_auto_align():
         global AUTO_ALIGN_ENABLED
@@ -1370,6 +1465,34 @@ def launch_gui():
     ttk.Button(anchor_btn_row, text="Reload Templates", command=reload_anchor_templates).pack(side="left", padx=5)
     ttk.Button(anchor_btn_row, text="Realign Now", command=manual_realign).pack(side="left", padx=5)
     ttk.Button(anchor_btn_row, text="Open Template Folder", command=open_anchor_directory).pack(side="left", padx=5)
+
+    frm_display = ttk.LabelFrame(root, text="Result Display")
+    frm_display.pack(fill="x", padx=5, pady=5)
+
+    info_offset_x = tk.Scale(
+        frm_display,
+        from_=-800,
+        to=800,
+        orient="horizontal",
+        label="Display offset X",
+        command=update_info_overlay_from_sliders,
+    )
+    info_offset_x.set(int(INFO_OVERLAY_OFFSET.get("x", 0)))
+    info_offset_x.pack(fill="x")
+
+    info_offset_y = tk.Scale(
+        frm_display,
+        from_=-600,
+        to=600,
+        orient="horizontal",
+        label="Display offset Y",
+        command=update_info_overlay_from_sliders,
+    )
+    info_offset_y.set(int(INFO_OVERLAY_OFFSET.get("y", 0)))
+    info_offset_y.pack(fill="x")
+
+    register_overlay_sliders(info_offset_x, info_offset_y)
+    sync_overlay_sliders()
 
     frm_ctrl = ttk.LabelFrame(root, text="Controls")
     frm_ctrl.pack(fill="x", padx=5, pady=5)
