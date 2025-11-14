@@ -50,6 +50,34 @@ file_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
+
+def show_installation_message(system_name: str) -> None:
+    """Present final installation instructions, using a GUI prompt on Windows."""
+    message = (
+        f"Ollama installation initiated for {system_name.title()}.\n\n"
+        "After installation completes:\n"
+        "1. Restart this program\n"
+        "2. The first scan will download the AI model automatically\n\n"
+        "Visit https://ollama.com/ for troubleshooting."
+    )
+
+    if system_name == "windows":
+        temp_root = None
+        try:
+            temp_root = tk.Tk()
+            temp_root.withdraw()
+            messagebox.showinfo("Ollama Installation", message, parent=temp_root)
+        except Exception as exc:
+            logger.debug(f"Unable to show Windows message box: {exc}")
+            logger.info(message)
+        else:
+            logger.info(message)
+        finally:
+            if temp_root is not None:
+                temp_root.destroy()
+    else:
+        logger.info(message)
+
 def ensure_ollama_installed():
     """
     Check if Ollama is installed on the system (cross-platform).
@@ -62,69 +90,32 @@ def ensure_ollama_installed():
         
         logger.info("Ollama not found on your system.")
         logger.info("Ollama is required for AI-powered code recognition.")
-        logger.info()
-        
+        logger.info("")
+
         if system == "windows":
             # Windows - offer automatic download and install
             logger.info("=== Windows Installation Options ===")
             logger.info("1. Automatic download and install (Recommended)")
             logger.info("2. Manual download from website")
-            logger.info()
-            
-            choice = input("Would you like to automatically download and install Ollama? (y/n): ").lower().strip()
-            
-            if choice in ['y', 'yes', '1', '']:
-                try:
-                    import urllib.request
-                    
-                    ollama_url = "https://ollama.com/download/OllamaSetup.exe"
-                    installer_path = os.path.join(os.getcwd(), "OllamaSetup.exe")
-                    
-                    logger.info("Downloading Ollama installer...")
-                    logger.info(f"URL: {ollama_url}")
-                    logger.info(f"Saving to: {installer_path}")
-                    
-                    # Download with progress
-                    def show_progress(block_num, block_size, total_size):
-                        downloaded = block_num * block_size
-                        if total_size > 0:
-                            percent = min(100, (downloaded * 100) // total_size)
-                            print(f"\rProgress: {percent}% ({downloaded // (1024*1024):.1f}MB / {total_size // (1024*1024):.1f}MB)", end="", flush=True)
-                    
-                    urllib.request.urlretrieve(ollama_url, installer_path, show_progress)
-                    logger.info("\nDownload completed!")
-                    
-                    # Run installer
-                    logger.info("Running Ollama installer...")
-                    logger.info("Please follow the installation prompts.")
-                    result = subprocess.run([installer_path], check=False)
-                    
-                    # Clean up installer
-                    try:
-                        os.remove(installer_path)
-                        logger.info("Installer file cleaned up.")
-                    except:
-                        pass
-                    
-                    if result.returncode == 0:
-                        logger.info("Ollama installation completed!")
-                        logger.info("Please restart this program to continue.")
-                    else:
-                        logger.warning("Installation may have been cancelled or failed.")
-                        logger.info("You can try running the installer manually or visit https://ollama.com/")
-                    
-                except Exception as e:
-                    logger.error(f"Error downloading Ollama: {e}")
-                    logger.info("Please visit https://ollama.com/ to download manually.")
-                    webbrowser.open("https://ollama.com/")
-            else:
-                logger.info("Opening Ollama website for manual download...")
-                webbrowser.open("https://ollama.com/")
-        
+            logger.info("")
+
+            download_url = "https://ollama.com/download/OllamaSetup.exe"
+            logger.info("Opening the Ollama download link in your default browser...")
+            logger.info(f"Download URL: {download_url}")
+            try:
+                opened = webbrowser.open(download_url)
+                if opened:
+                    logger.info("Browser opened successfully. Follow the prompts to install Ollama.")
+                else:
+                    logger.warning("The browser did not report success. Please open the link manually if nothing happens.")
+            except Exception as e:
+                logger.error(f"Unable to open browser automatically: {e}")
+                logger.info("Please open the link manually to download Ollama.")
+
         elif system == "linux":
             # Linux - detect distribution and offer package manager commands
             logger.info("=== Linux Installation Options ===")
-            
+
             # Try to detect Linux distribution
             distro_info = ""
             package_cmd = ""
@@ -157,11 +148,11 @@ def ensure_ollama_installed():
             
             logger.info(f"Detected: {distro_info}")
             logger.info(f"Recommended command: {package_cmd}")
-            logger.info()
+            logger.info("")
             logger.info("1. Run the recommended installation command")
             logger.info("2. Manual installation from website")
-            logger.info()
-            
+            logger.info("")
+
             choice = input("Would you like to run the installation command? (y/n): ").lower().strip()
             
             if choice in ['y', 'yes', '1', '']:
@@ -190,15 +181,8 @@ def ensure_ollama_installed():
             webbrowser.open("https://ollama.com/")
         
         # Show final message
-        messagebox.showinfo(
-            "Ollama Installation",
-            f"Ollama installation initiated for {system.title()}.\n\n"
-            "After installation completes:\n"
-            "1. Restart this program\n"
-            "2. The first scan will download the AI model automatically\n\n"
-            "Visit https://ollama.com/ for troubleshooting."
-        )
-        
+        show_installation_message(system)
+
         input("\nPress ENTER after installing Ollama to close this program...")
         sys.exit(0)
 
