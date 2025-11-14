@@ -1591,12 +1591,35 @@ def index():
 
 @app.route("/status")
 def status():
-    return jsonify({
+    """Return the latest scan information for the overlay UI."""
+
+    selected_region = request.args.get("region", "STANTON").upper()
+    result = last_result or {}
+    info = result.get("info") if isinstance(result, dict) else None
+
+    table = None
+    if info:
+        deposit_key = (info.get("key") or info.get("name") or "").upper()
+        region_tables = DEPOSIT_TABLES.get(selected_region, {})
+        table = region_tables.get(deposit_key)
+
+    response = {
+        # Legacy keys kept for compatibility with any external tools.
         "region": CAP_REGION,
         "label_color": label_color,
         "last": last_result,
         "alignment": last_alignment_info,
-    })
+        # Data consumed by the overlay web page.
+        "selected_region": selected_region,
+        "info": info,
+        "code": result.get("code") if isinstance(result, dict) else None,
+        "code_raw": result.get("code_raw") if isinstance(result, dict) else None,
+        "confidence": float(result.get("confidence", 0.0)) if isinstance(result, dict) else 0.0,
+        "raw_text": result.get("raw_text") if isinstance(result, dict) else None,
+        "table": table,
+    }
+
+    return jsonify(response)
 
 
 def hotkey_listener():
