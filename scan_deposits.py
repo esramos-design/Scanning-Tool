@@ -552,6 +552,10 @@ overlay_text_id = None
 overlay_text = ""
 last_overlay_time = 0
 root_overlay = None
+capture_rect_id = None
+anchor_overlay_root = None
+anchor_overlay_canvas = None
+anchor_rect_id = None
 
 
 def perform_auto_alignment() -> bool:
@@ -596,9 +600,9 @@ def perform_auto_alignment() -> bool:
 
     if root_overlay:
         try:
-            root_overlay.after(0, update_overlay_region)
+            root_overlay.after(0, update_capture_overlay_region)
         except RuntimeError:
-            update_overlay_region()
+            update_capture_overlay_region()
 
     logger.debug(
         "Auto alignment applied using %s (score %.3f) => CAP_REGION left/top updated to (%d, %d)",
@@ -639,6 +643,33 @@ def start_label_timeout(root):
 
 
 
+def enforce_topmost(window: tk.Toplevel, interval_ms: int = 1500) -> None:
+    """Continuously lift the overlay window so it stays above focused apps."""
+    if window is None:
+        return
+    if not window.winfo_exists():
+        return
+    try:
+        window.attributes("-topmost", True)
+        window.lift()
+    except tk.TclError:
+        return
+    window.after(interval_ms, lambda: enforce_topmost(window, interval_ms))
+
+
+def create_overlay_window(width: int, height: int, left: int, top: int) -> tk.Toplevel:
+    """Create a transparent always-on-top overlay window."""
+    window = tk.Toplevel()
+    window.attributes("-transparentcolor", "black")
+    window.attributes("-topmost", True)
+    window.overrideredirect(True)
+    window.configure(bg="black")
+    window.geometry(f"{width}x{height}+{left}+{top}")
+    enforce_topmost(window)
+    return window
+
+
+
 # ---------- GUI + Overlay ----------
 def choose_label_color():
     global label_color, overlay_canvas, overlay_text_id
@@ -649,8 +680,18 @@ def choose_label_color():
             overlay_canvas.itemconfig(overlay_text_id, fill=label_color)
 
 
-def show_overlay():
-    global border_canvas, overlay_canvas, overlay_text_id, rect_id, root_overlay
+def show_capture_overlay():
+    global border_canvas, overlay_canvas, overlay_text_id, root_overlay, capture_rect_id
+
+    if root_overlay and root_overlay.winfo_exists():
+        try:
+            root_overlay.destroy()
+        except tk.TclError:
+            pass
+        overlay_canvas = None
+        overlay_text_id = None
+        capture_rect_id = None
+        border_canvas = None
 
     cap_w, cap_h = int(CAP_REGION['width']), int(CAP_REGION['height'])
     padding_x, padding_y = 100, 40
@@ -660,36 +701,43 @@ def show_overlay():
     left = int(CAP_REGION['left']) - (padding_x // 2)
     top = int(CAP_REGION['top']) - padding_y
 
-    root_overlay = tk.Toplevel()
-    root_overlay.attributes("-transparentcolor", "black")
-    root_overlay.attributes("-topmost", True)
-    root_overlay.overrideredirect(True)
-    root_overlay.configure(bg="black")
-    root_overlay.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
+    root_overlay = create_overlay_window(overlay_width, overlay_height, left, top)
 
-    overlay_canvas = tk.Canvas(root_overlay, width=overlay_width, height=overlay_height,
-                               bg="black", highlightthickness=0)
+    overlay_canvas = tk.Canvas(
+        root_overlay,
+        width=overlay_width,
+        height=overlay_height,
+        bg="black",
+        highlightthickness=0,
+    )
     overlay_canvas.pack()
     border_canvas = overlay_canvas
 
-    rect_id = overlay_canvas.create_rectangle(
-        padding_x // 2, padding_y,
-        padding_x // 2 + cap_w, padding_y + cap_h,
-        outline="red", width=3, tags=("border",)
+    capture_rect_id = overlay_canvas.create_rectangle(
+        padding_x // 2,
+        padding_y,
+        padding_x // 2 + cap_w,
+        padding_y + cap_h,
+        outline="red",
+        width=3,
+        tags=("border",),
     )
 
     overlay_text_id = overlay_canvas.create_text(
-        overlay_width // 2, 5,
-        text="", fill=label_color, font=("Arial", 14, "bold"),
-        width=overlay_width - 20, anchor="n"
+        overlay_width // 2,
+        5,
+        text="",
+        fill=label_color,
+        font=("Arial", 14, "bold"),
+        width=overlay_width - 20,
+        anchor="n",
     )
     start_label_timeout(root_overlay)
 
 
-
-def update_overlay_region():
-    global overlay_canvas, rect_id, root_overlay
-    if not overlay_canvas or not rect_id:
+def update_capture_overlay_region():
+    global overlay_canvas, capture_rect_id, root_overlay
+    if not overlay_canvas or not capture_rect_id or not root_overlay:
         return
     cap_w, cap_h = int(CAP_REGION['width']), int(CAP_REGION['height'])
     padding_x, padding_y = 100, 40
@@ -698,9 +746,100 @@ def update_overlay_region():
     left = int(CAP_REGION['left']) - (padding_x // 2)
     top = int(CAP_REGION['top']) - padding_y
 
-    overlay_canvas.coords(rect_id, padding_x // 2, padding_y,
-                          padding_x // 2 + cap_w, padding_y + cap_h)
+    overlay_canvas.coords(
+        capture_rect_id,
+        padding_x // 2,
+        padding_y,
+        padding_x // 2 + cap_w,
+        padding_y + cap_h,
+    )
     root_overlay.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
+    try:
+        root_overlay.lift()
+    except tk.TclError:
+        pass
+
+
+def show_anchor_overlay():
+    global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id
+
+    if anchor_overlay_root and anchor_overlay_root.winfo_exists():
+        try:
+            anchor_overlay_root.destroy()
+        except tk.TclError:
+            pass
+        anchor_overlay_canvas = None
+        anchor_rect_id = None
+
+    pad = 40
+    width = int(ANCHOR_REGION['width']) + pad
+    height = int(ANCHOR_REGION['height']) + pad
+    left = int(ANCHOR_REGION['left']) - (pad // 2)
+    top = int(ANCHOR_REGION['top']) - (pad // 2)
+
+    anchor_overlay_root = create_overlay_window(width, height, left, top)
+
+    anchor_overlay_canvas = tk.Canvas(
+        anchor_overlay_root,
+        width=width,
+        height=height,
+        bg="black",
+        highlightthickness=0,
+    )
+    anchor_overlay_canvas.pack()
+
+    anchor_rect_id = anchor_overlay_canvas.create_rectangle(
+        pad // 2,
+        pad // 2,
+        pad // 2 + int(ANCHOR_REGION['width']),
+        pad // 2 + int(ANCHOR_REGION['height']),
+        outline="#00d4ff",
+        width=2,
+    )
+
+    anchor_overlay_canvas.create_text(
+        width // 2,
+        5,
+        text="ANCHOR REGION",
+        fill="#00d4ff",
+        font=("Arial", 12, "bold"),
+        anchor="n",
+    )
+
+
+def update_anchor_overlay_region():
+    global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id
+    if not anchor_overlay_root or not anchor_overlay_canvas or not anchor_rect_id:
+        return
+
+    pad = 40
+    width = int(ANCHOR_REGION['width']) + pad
+    height = int(ANCHOR_REGION['height']) + pad
+    left = int(ANCHOR_REGION['left']) - (pad // 2)
+    top = int(ANCHOR_REGION['top']) - (pad // 2)
+
+    anchor_overlay_canvas.coords(
+        anchor_rect_id,
+        pad // 2,
+        pad // 2,
+        pad // 2 + int(ANCHOR_REGION['width']),
+        pad // 2 + int(ANCHOR_REGION['height']),
+    )
+    anchor_overlay_root.geometry(f"{width}x{height}+{left}+{top}")
+    try:
+        anchor_overlay_root.lift()
+    except tk.TclError:
+        pass
+
+
+def show_overlay():
+    show_anchor_overlay()
+    show_capture_overlay()
+
+
+def update_overlay_region():
+    update_anchor_overlay_region()
+    update_capture_overlay_region()
 
 
 def launch_gui():
@@ -710,7 +849,7 @@ def launch_gui():
         CAP_REGION["width"] = int(slider_width.get())
         CAP_REGION["height"] = int(slider_height.get())
         status_var.set(f"CAP_REGION updated: {CAP_REGION}")
-        update_overlay_region()
+        update_capture_overlay_region()
 
     def update_anchor_region_from_sliders(*args):
         ANCHOR_REGION["left"] = int(anchor_left.get())
@@ -720,6 +859,7 @@ def launch_gui():
         anchor_status_var.set(f"Anchor region updated: {ANCHOR_REGION}")
         if AUTO_ALIGN_ENABLED:
             perform_auto_alignment()
+        update_anchor_overlay_region()
 
     def update_anchor_offset_from_sliders(*args):
         ANCHOR_OFFSET["x"] = int(anchor_offset_x.get())
@@ -782,10 +922,15 @@ def launch_gui():
         anchor_status_var.set(f"Anchor detection threshold set to {ANCHOR_THRESHOLD:.2f}")
 
     def on_close():
+        global root_overlay, anchor_overlay_root
         save_config()
         try:
             if root_overlay:
                 root_overlay.destroy()
+                root_overlay = None
+            if anchor_overlay_root:
+                anchor_overlay_root.destroy()
+                anchor_overlay_root = None
         except Exception:
             pass
         root.destroy()
