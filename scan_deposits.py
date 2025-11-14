@@ -71,7 +71,7 @@ def apply_glass_theme(root: tk.Tk) -> Dict[str, str]:
     }
 
     root.configure(bg=colors["background"])
-    root.option_add("*Font", "Segoe UI 10")
+    root.option_add("*Font", "{Segoe UI} 10")
     root.option_add("*Foreground", colors["text"])
     root.option_add("*TCombobox*Listbox*Background", colors["panel"])
     style = ttk.Style(root)
@@ -165,7 +165,7 @@ def style_scale(scale: tk.Scale, colors: Dict[str, str]) -> None:
             bd=0,
             sliderrelief="flat",
             activebackground=colors["button_hover"],
-            font="Segoe UI 9",
+            font=("Segoe UI", 9),
         )
     except tk.TclError:
         scale.configure(bg=colors["panel"], fg=colors["accent"])  # type: ignore[arg-type]
