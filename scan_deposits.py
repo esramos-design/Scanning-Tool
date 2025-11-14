@@ -165,7 +165,7 @@ def style_scale(scale: tk.Scale, colors: Dict[str, str]) -> None:
             bd=0,
             sliderrelief="flat",
             activebackground=colors["button_hover"],
-            font=("Segoe UI", 9),
+            font="Segoe UI 9",
         )
     except tk.TclError:
         scale.configure(bg=colors["panel"], fg=colors["accent"])  # type: ignore[arg-type]
