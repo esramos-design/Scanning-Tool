@@ -5,5 +5,18 @@
         "width": 185,
         "height": 30
     },
-    "label_color": "#4bf569"
+    "label_color": "#4bf569",
+    "AUTO_ALIGN_ENABLED": true,
+    "ANCHOR_REGION": {
+        "left": 1100,
+        "top": 240,
+        "width": 320,
+        "height": 140
+    },
+    "ANCHOR_OFFSET": {
+        "x": 36,
+        "y": 56
+    },
+    "ANCHOR_THRESHOLD": 0.82,
+    "ANCHOR_TEMPLATE_DIR": "assets/anchor_templates"
 }

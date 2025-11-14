@@ -5,7 +5,10 @@ import io
 import base64
 import os
 import sys
+from pathlib import Path
 from threading import Thread
+from typing import Dict, List, Optional, Tuple
+
 from PIL import Image
 import cv2
 import numpy as np
@@ -50,6 +53,34 @@ file_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
+
+def show_installation_message(system_name: str) -> None:
+    """Present final installation instructions, using a GUI prompt on Windows."""
+    message = (
+        f"Ollama installation initiated for {system_name.title()}.\n\n"
+        "After installation completes:\n"
+        "1. Restart this program\n"
+        "2. The first scan will download the AI model automatically\n\n"
+        "Visit https://ollama.com/ for troubleshooting."
+    )
+
+    if system_name == "windows":
+        temp_root = None
+        try:
+            temp_root = tk.Tk()
+            temp_root.withdraw()
+            messagebox.showinfo("Ollama Installation", message, parent=temp_root)
+        except Exception as exc:
+            logger.debug(f"Unable to show Windows message box: {exc}")
+            logger.info(message)
+        else:
+            logger.info(message)
+        finally:
+            if temp_root is not None:
+                temp_root.destroy()
+    else:
+        logger.info(message)
+
 def ensure_ollama_installed():
     """
     Check if Ollama is installed on the system (cross-platform).
@@ -62,69 +93,32 @@ def ensure_ollama_installed():
         
         logger.info("Ollama not found on your system.")
         logger.info("Ollama is required for AI-powered code recognition.")
-        logger.info()
-        
+        logger.info("")
+
         if system == "windows":
             # Windows - offer automatic download and install
             logger.info("=== Windows Installation Options ===")
             logger.info("1. Automatic download and install (Recommended)")
             logger.info("2. Manual download from website")
-            logger.info()
-            
-            choice = input("Would you like to automatically download and install Ollama? (y/n): ").lower().strip()
-            
-            if choice in ['y', 'yes', '1', '']:
-                try:
-                    import urllib.request
-                    
-                    ollama_url = "https://ollama.com/download/OllamaSetup.exe"
-                    installer_path = os.path.join(os.getcwd(), "OllamaSetup.exe")
-                    
-                    logger.info("Downloading Ollama installer...")
-                    logger.info(f"URL: {ollama_url}")
-                    logger.info(f"Saving to: {installer_path}")
-                    
-                    # Download with progress
-                    def show_progress(block_num, block_size, total_size):
-                        downloaded = block_num * block_size
-                        if total_size > 0:
-                            percent = min(100, (downloaded * 100) // total_size)
-                            print(f"\rProgress: {percent}% ({downloaded // (1024*1024):.1f}MB / {total_size // (1024*1024):.1f}MB)", end="", flush=True)
-                    
-                    urllib.request.urlretrieve(ollama_url, installer_path, show_progress)
-                    logger.info("\nDownload completed!")
-                    
-                    # Run installer
-                    logger.info("Running Ollama installer...")
-                    logger.info("Please follow the installation prompts.")
-                    result = subprocess.run([installer_path], check=False)
-                    
-                    # Clean up installer
-                    try:
-                        os.remove(installer_path)
-                        logger.info("Installer file cleaned up.")
-                    except:
-                        pass
-                    
-                    if result.returncode == 0:
-                        logger.info("Ollama installation completed!")
-                        logger.info("Please restart this program to continue.")
-                    else:
-                        logger.warning("Installation may have been cancelled or failed.")
-                        logger.info("You can try running the installer manually or visit https://ollama.com/")
-                    
-                except Exception as e:
-                    logger.error(f"Error downloading Ollama: {e}")
-                    logger.info("Please visit https://ollama.com/ to download manually.")
-                    webbrowser.open("https://ollama.com/")
-            else:
-                logger.info("Opening Ollama website for manual download...")
-                webbrowser.open("https://ollama.com/")
-        
+            logger.info("")
+
+            download_url = "https://ollama.com/download/OllamaSetup.exe"
+            logger.info("Opening the Ollama download link in your default browser...")
+            logger.info(f"Download URL: {download_url}")
+            try:
+                opened = webbrowser.open(download_url)
+                if opened:
+                    logger.info("Browser opened successfully. Follow the prompts to install Ollama.")
+                else:
+                    logger.warning("The browser did not report success. Please open the link manually if nothing happens.")
+            except Exception as e:
+                logger.error(f"Unable to open browser automatically: {e}")
+                logger.info("Please open the link manually to download Ollama.")
+
         elif system == "linux":
             # Linux - detect distribution and offer package manager commands
             logger.info("=== Linux Installation Options ===")
-            
+
             # Try to detect Linux distribution
             distro_info = ""
             package_cmd = ""
@@ -157,11 +151,11 @@ def ensure_ollama_installed():
             
             logger.info(f"Detected: {distro_info}")
             logger.info(f"Recommended command: {package_cmd}")
-            logger.info()
+            logger.info("")
             logger.info("1. Run the recommended installation command")
             logger.info("2. Manual installation from website")
-            logger.info()
-            
+            logger.info("")
+
             choice = input("Would you like to run the installation command? (y/n): ").lower().strip()
             
             if choice in ['y', 'yes', '1', '']:
@@ -190,15 +184,8 @@ def ensure_ollama_installed():
             webbrowser.open("https://ollama.com/")
         
         # Show final message
-        messagebox.showinfo(
-            "Ollama Installation",
-            f"Ollama installation initiated for {system.title()}.\n\n"
-            "After installation completes:\n"
-            "1. Restart this program\n"
-            "2. The first scan will download the AI model automatically\n\n"
-            "Visit https://ollama.com/ for troubleshooting."
-        )
-        
+        show_installation_message(system)
+
         input("\nPress ENTER after installing Ollama to close this program...")
         sys.exit(0)
 
@@ -230,6 +217,11 @@ def ensure_model_installed(model="qwen2.5vl:3b"):
 CONFIG_FILE = "config.json"
 
 CAP_REGION = {"left": 1260, "top": 310, "width": 160, "height": 30}
+ANCHOR_REGION = {"left": 1100, "top": 240, "width": 320, "height": 140}
+ANCHOR_OFFSET = {"x": 36, "y": 56}
+ANCHOR_THRESHOLD = 0.82
+AUTO_ALIGN_ENABLED = True
+ANCHOR_TEMPLATE_DIR = "assets/anchor_templates"
 label_color = "yellow"
 MIN_CONFIDENCE = 0.65
 DEBUG_SHOW_OVERLAY = True
@@ -243,28 +235,169 @@ CODE_RE = re.compile(
 
 last_result = {"code": None, "code_raw": None, "info": None,
                "confidence": 0.0, "raw_text": ""}
+last_alignment_info = {
+    "enabled": AUTO_ALIGN_ENABLED,
+    "matched": False,
+    "template": None,
+    "score": 0.0,
+    "match_left": None,
+    "match_top": None,
+}
 
 
 # ---------- Config Handling ----------
+def ensure_anchor_directory(path: str) -> None:
+    """Ensure the directory for anchor templates exists."""
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.warning(f"Unable to ensure anchor template directory {path}: {exc}")
+
+
+class AnchorRegionTracker:
+    """Manage template loading and anchor matching for auto alignment."""
+
+    def __init__(self, template_dir: str, threshold: float = 0.82) -> None:
+        self.template_dir = template_dir
+        self.threshold = threshold
+        self.templates: List[Tuple[str, np.ndarray]] = []
+        self.last_loaded_count = 0
+        self.load_templates()
+
+    def set_threshold(self, threshold: float) -> None:
+        self.threshold = threshold
+
+    def set_directory(self, template_dir: str) -> int:
+        self.template_dir = template_dir
+        return self.load_templates()
+
+    def load_templates(self) -> int:
+        ensure_anchor_directory(self.template_dir)
+        loaded: List[Tuple[str, np.ndarray]] = []
+        directory = Path(self.template_dir)
+        if not directory.exists():
+            logger.debug(f"Anchor template directory does not exist: {directory}")
+            self.templates = []
+            self.last_loaded_count = 0
+            return 0
+
+        supported_ext = {".png", ".jpg", ".jpeg", ".bmp"}
+        for path in sorted(directory.glob("**/*")):
+            if path.suffix.lower() not in supported_ext or not path.is_file():
+                continue
+            image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+            if image is None:
+                logger.warning(f"Failed to load anchor template: {path}")
+                continue
+            loaded.append((path.name, image))
+
+        self.templates = loaded
+        self.last_loaded_count = len(loaded)
+        if self.last_loaded_count == 0:
+            logger.warning(
+                "No anchor templates were loaded. Head sway compensation will remain disabled until templates are added."
+            )
+        else:
+            logger.info(f"Loaded {self.last_loaded_count} anchor templates from {directory}")
+        return self.last_loaded_count
+
+    def locate_anchor(self, region: Dict[str, int]) -> Optional[Dict[str, float]]:
+        if not self.templates:
+            return None
+
+        monitor = {
+            "left": int(region["left"]),
+            "top": int(region["top"]),
+            "width": int(region["width"]),
+            "height": int(region["height"]),
+        }
+
+        with mss.mss() as sct:
+            try:
+                screenshot = sct.grab(monitor)
+            except Exception as exc:
+                logger.error(f"Anchor capture failed: {exc}")
+                return None
+
+        anchor_image = np.array(screenshot)
+        if anchor_image.ndim == 3 and anchor_image.shape[2] == 4:
+            anchor_gray = cv2.cvtColor(anchor_image, cv2.COLOR_BGRA2GRAY)
+        else:
+            anchor_gray = cv2.cvtColor(anchor_image, cv2.COLOR_BGR2GRAY)
+
+        best_score = -1.0
+        best_loc: Optional[Tuple[int, int]] = None
+        best_template: Optional[Tuple[str, np.ndarray]] = None
+
+        for template_name, template_img in self.templates:
+            if anchor_gray.shape[0] < template_img.shape[0] or anchor_gray.shape[1] < template_img.shape[1]:
+                continue
+            res = cv2.matchTemplate(anchor_gray, template_img, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val > best_score:
+                best_score = float(max_val)
+                best_loc = max_loc
+                best_template = (template_name, template_img)
+
+        if best_loc is None or best_template is None:
+            return None
+
+        if best_score < self.threshold:
+            logger.debug(
+                f"Anchor match below threshold ({best_score:.3f} < {self.threshold:.3f}) using template {best_template[0]}"
+            )
+            return None
+
+        match_left = monitor["left"] + best_loc[0]
+        match_top = monitor["top"] + best_loc[1]
+        return {
+            "match_left": float(match_left),
+            "match_top": float(match_top),
+            "score": best_score,
+            "template": best_template[0],
+            "template_width": float(best_template[1].shape[1]),
+            "template_height": float(best_template[1].shape[0]),
+        }
+
+
+anchor_tracker: Optional[AnchorRegionTracker] = None
+
+
 def load_config():
-    global CAP_REGION, label_color
+    global CAP_REGION, label_color, AUTO_ALIGN_ENABLED, ANCHOR_REGION, ANCHOR_OFFSET, ANCHOR_THRESHOLD, ANCHOR_TEMPLATE_DIR
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
                 CAP_REGION = data.get("CAP_REGION", CAP_REGION)
                 label_color = data.get("label_color", label_color)
+                AUTO_ALIGN_ENABLED = data.get("AUTO_ALIGN_ENABLED", AUTO_ALIGN_ENABLED)
+                ANCHOR_REGION = data.get("ANCHOR_REGION", ANCHOR_REGION)
+                ANCHOR_OFFSET = data.get("ANCHOR_OFFSET", ANCHOR_OFFSET)
+                ANCHOR_THRESHOLD = data.get("ANCHOR_THRESHOLD", ANCHOR_THRESHOLD)
+                ANCHOR_TEMPLATE_DIR = data.get("ANCHOR_TEMPLATE_DIR", ANCHOR_TEMPLATE_DIR)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Config file invalid or empty, resetting: {e}")
             save_config()
     else:
         save_config()
 
+    ensure_anchor_directory(ANCHOR_TEMPLATE_DIR)
+    last_alignment_info["enabled"] = AUTO_ALIGN_ENABLED
+
 
 
 def save_config():
-    global CAP_REGION, label_color
-    data = {"CAP_REGION": CAP_REGION, "label_color": label_color}
+    global CAP_REGION, label_color, AUTO_ALIGN_ENABLED, ANCHOR_REGION, ANCHOR_OFFSET, ANCHOR_THRESHOLD, ANCHOR_TEMPLATE_DIR
+    data = {
+        "CAP_REGION": CAP_REGION,
+        "label_color": label_color,
+        "AUTO_ALIGN_ENABLED": AUTO_ALIGN_ENABLED,
+        "ANCHOR_REGION": ANCHOR_REGION,
+        "ANCHOR_OFFSET": ANCHOR_OFFSET,
+        "ANCHOR_THRESHOLD": ANCHOR_THRESHOLD,
+        "ANCHOR_TEMPLATE_DIR": ANCHOR_TEMPLATE_DIR,
+    }
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
     logger.info("Config saved.")
@@ -421,6 +554,62 @@ last_overlay_time = 0
 root_overlay = None
 
 
+def perform_auto_alignment() -> bool:
+    """Attempt to adjust the capture region based on anchor template matches."""
+    global CAP_REGION, last_alignment_info
+
+    last_alignment_info["enabled"] = AUTO_ALIGN_ENABLED
+
+    if not AUTO_ALIGN_ENABLED:
+        return False
+
+    if anchor_tracker is None:
+        logger.debug("Anchor tracker not initialised; skipping auto alignment.")
+        return False
+
+    anchor_tracker.set_threshold(float(ANCHOR_THRESHOLD))
+    detection = anchor_tracker.locate_anchor(ANCHOR_REGION)
+
+    if not detection:
+        last_alignment_info.update({
+            "matched": False,
+            "template": None,
+            "score": 0.0,
+            "match_left": None,
+            "match_top": None,
+        })
+        return False
+
+    new_left = int(round(detection["match_left"] + ANCHOR_OFFSET.get("x", 0)))
+    new_top = int(round(detection["match_top"] + ANCHOR_OFFSET.get("y", 0)))
+
+    CAP_REGION["left"] = max(0, new_left)
+    CAP_REGION["top"] = max(0, new_top)
+
+    last_alignment_info.update({
+        "matched": True,
+        "template": detection["template"],
+        "score": float(detection["score"]),
+        "match_left": detection["match_left"],
+        "match_top": detection["match_top"],
+    })
+
+    if root_overlay:
+        try:
+            root_overlay.after(0, update_overlay_region)
+        except RuntimeError:
+            update_overlay_region()
+
+    logger.debug(
+        "Auto alignment applied using %s (score %.3f) => CAP_REGION left/top updated to (%d, %d)",
+        detection["template"],
+        detection["score"],
+        CAP_REGION["left"],
+        CAP_REGION["top"],
+    )
+    return True
+
+
 def toggle_border():
     """Toggle visibility of the debug red border."""
     global show_border, border_canvas
@@ -520,20 +709,93 @@ def launch_gui():
         CAP_REGION["top"] = int(slider_top.get())
         CAP_REGION["width"] = int(slider_width.get())
         CAP_REGION["height"] = int(slider_height.get())
-        lbl_status.config(text=f"CAP_REGION = {CAP_REGION}")
+        status_var.set(f"CAP_REGION updated: {CAP_REGION}")
+        update_overlay_region()
+
+    def update_anchor_region_from_sliders(*args):
+        ANCHOR_REGION["left"] = int(anchor_left.get())
+        ANCHOR_REGION["top"] = int(anchor_top.get())
+        ANCHOR_REGION["width"] = int(anchor_width.get())
+        ANCHOR_REGION["height"] = int(anchor_height.get())
+        anchor_status_var.set(f"Anchor region updated: {ANCHOR_REGION}")
+        if AUTO_ALIGN_ENABLED:
+            perform_auto_alignment()
+
+    def update_anchor_offset_from_sliders(*args):
+        ANCHOR_OFFSET["x"] = int(anchor_offset_x.get())
+        ANCHOR_OFFSET["y"] = int(anchor_offset_y.get())
+        anchor_status_var.set(f"Anchor offset updated: {ANCHOR_OFFSET}")
+        if AUTO_ALIGN_ENABLED:
+            perform_auto_alignment()
+
+    def toggle_auto_align():
+        global AUTO_ALIGN_ENABLED
+        AUTO_ALIGN_ENABLED = auto_align_var.get()
+        last_alignment_info["enabled"] = AUTO_ALIGN_ENABLED
+        anchor_status_var.set(
+            "Head sway compensation enabled." if AUTO_ALIGN_ENABLED else "Head sway compensation disabled."
+        )
+
+    def reload_anchor_templates():
+        global anchor_tracker
+        ensure_anchor_directory(ANCHOR_TEMPLATE_DIR)
+        if anchor_tracker is None:
+            anchor_tracker = AnchorRegionTracker(ANCHOR_TEMPLATE_DIR, ANCHOR_THRESHOLD)
+        count = anchor_tracker.set_directory(ANCHOR_TEMPLATE_DIR)
+        anchor_status_var.set(f"Loaded {count} anchor template(s) from {ANCHOR_TEMPLATE_DIR}.")
+
+    def manual_realign():
+        success = perform_auto_alignment()
+        if success:
+            anchor_status_var.set(
+                f"Anchor locked using {last_alignment_info['template']} (score {last_alignment_info['score']:.2f})."
+            )
+            status_var.set(f"Auto alignment adjusted CAP_REGION: {CAP_REGION}")
+        else:
+            anchor_status_var.set("Anchor match not found. Adjust search region or add templates.")
+
+    def open_anchor_directory():
+        path = os.path.abspath(ANCHOR_TEMPLATE_DIR)
+        ensure_anchor_directory(path)
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform.startswith("darwin"):
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception as exc:
+            anchor_status_var.set(f"Unable to open template folder: {exc}")
+        else:
+            anchor_status_var.set(f"Opened template folder: {path}")
+
+    def update_threshold(*_args):
+        global ANCHOR_THRESHOLD
+        try:
+            value = float(threshold_var.get())
+        except (tk.TclError, ValueError):
+            return
+        value = max(0.1, min(0.99, value))
+        ANCHOR_THRESHOLD = value
+        if anchor_tracker is not None:
+            anchor_tracker.set_threshold(ANCHOR_THRESHOLD)
+        anchor_status_var.set(f"Anchor detection threshold set to {ANCHOR_THRESHOLD:.2f}")
 
     def on_close():
         save_config()
         try:
             if root_overlay:
                 root_overlay.destroy()
-        except:
+        except Exception:
             pass
         root.destroy()
 
     root = tk.Tk()
     root.title("Star Citizen Scanner Control")
     root.protocol("WM_DELETE_WINDOW", on_close)
+
+    status_var = tk.StringVar(value="Ready.")
+    anchor_status_var = tk.StringVar(value="Head sway compensation ready.")
 
     frm_region = ttk.LabelFrame(root, text="Capture Region")
     frm_region.pack(fill="x", padx=5, pady=5)
@@ -558,6 +820,59 @@ def launch_gui():
     slider_height.set(CAP_REGION["height"])
     slider_height.pack(fill="x")
 
+    frm_anchor = ttk.LabelFrame(root, text="Head Sway Compensation")
+    frm_anchor.pack(fill="x", padx=5, pady=5)
+
+    auto_align_var = tk.BooleanVar(value=AUTO_ALIGN_ENABLED)
+    chk_auto_align = tk.Checkbutton(frm_anchor, text="Enable auto alignment", variable=auto_align_var,
+                                    command=toggle_auto_align)
+    chk_auto_align.pack(anchor="w", padx=5, pady=(5, 0))
+
+    threshold_row = ttk.Frame(frm_anchor)
+    threshold_row.pack(fill="x", padx=5, pady=5)
+    ttk.Label(threshold_row, text="Detection threshold").pack(side="left")
+    threshold_var = tk.DoubleVar(value=ANCHOR_THRESHOLD)
+    threshold_spin = tk.Spinbox(threshold_row, from_=0.10, to=0.99, increment=0.01,
+                                 textvariable=threshold_var, width=6, command=update_threshold)
+    threshold_spin.pack(side="left", padx=5)
+    threshold_var.trace_add("write", update_threshold)
+
+    anchor_left = tk.Scale(frm_anchor, from_=0, to=3840, orient="horizontal",
+                           label="Anchor Left", command=update_anchor_region_from_sliders)
+    anchor_left.set(ANCHOR_REGION["left"])
+    anchor_left.pack(fill="x")
+
+    anchor_top = tk.Scale(frm_anchor, from_=0, to=2160, orient="horizontal",
+                          label="Anchor Top", command=update_anchor_region_from_sliders)
+    anchor_top.set(ANCHOR_REGION["top"])
+    anchor_top.pack(fill="x")
+
+    anchor_width = tk.Scale(frm_anchor, from_=50, to=1200, orient="horizontal",
+                            label="Anchor Width", command=update_anchor_region_from_sliders)
+    anchor_width.set(ANCHOR_REGION["width"])
+    anchor_width.pack(fill="x")
+
+    anchor_height = tk.Scale(frm_anchor, from_=50, to=800, orient="horizontal",
+                             label="Anchor Height", command=update_anchor_region_from_sliders)
+    anchor_height.set(ANCHOR_REGION["height"])
+    anchor_height.pack(fill="x")
+
+    anchor_offset_x = tk.Scale(frm_anchor, from_=-300, to=600, orient="horizontal",
+                               label="Offset X", command=update_anchor_offset_from_sliders)
+    anchor_offset_x.set(ANCHOR_OFFSET["x"])
+    anchor_offset_x.pack(fill="x")
+
+    anchor_offset_y = tk.Scale(frm_anchor, from_=-300, to=600, orient="horizontal",
+                               label="Offset Y", command=update_anchor_offset_from_sliders)
+    anchor_offset_y.set(ANCHOR_OFFSET["y"])
+    anchor_offset_y.pack(fill="x")
+
+    anchor_btn_row = ttk.Frame(frm_anchor)
+    anchor_btn_row.pack(fill="x", padx=5, pady=5)
+    ttk.Button(anchor_btn_row, text="Reload Templates", command=reload_anchor_templates).pack(side="left", padx=5)
+    ttk.Button(anchor_btn_row, text="Realign Now", command=manual_realign).pack(side="left", padx=5)
+    ttk.Button(anchor_btn_row, text="Open Template Folder", command=open_anchor_directory).pack(side="left", padx=5)
+
     frm_ctrl = ttk.LabelFrame(root, text="Controls")
     frm_ctrl.pack(fill="x", padx=5, pady=5)
 
@@ -568,9 +883,10 @@ def launch_gui():
     tk.Button(frm_ctrl, text="Save Config", command=save_config).pack(side="left", padx=5)
     tk.Button(frm_ctrl, text="Toggle Border", command=toggle_border).pack(side="left", padx=5)
 
-
-    lbl_status = tk.Label(root, text="Ready.", anchor="w", justify="left")
-    lbl_status.pack(fill="x", padx=5, pady=5)
+    ttk.Label(root, textvariable=status_var, anchor="w", justify="left").pack(fill="x", padx=5, pady=(5, 0))
+    ttk.Label(root, textvariable=anchor_status_var, anchor="w", justify="left", foreground="#8aa6ff").pack(
+        fill="x", padx=5, pady=(0, 5)
+    )
 
     show_overlay()
     root.mainloop()
@@ -580,6 +896,9 @@ def launch_gui():
 def capture_once():
     """Capture one scan from CAP_REGION and update overlay."""
     global last_result
+    auto_aligned = perform_auto_alignment()
+    if AUTO_ALIGN_ENABLED:
+        logger.debug("Auto alignment %s before capture.", "succeeded" if auto_aligned else "did not match")
     with mss.mss() as sct:
         monitor = {
             "left": CAP_REGION["left"],
@@ -628,7 +947,12 @@ def index():
 
 @app.route("/status")
 def status():
-    return jsonify({"region": CAP_REGION, "label_color": label_color, "last": last_result})
+    return jsonify({
+        "region": CAP_REGION,
+        "label_color": label_color,
+        "last": last_result,
+        "alignment": last_alignment_info,
+    })
 
 
 def hotkey_listener():
@@ -651,6 +975,7 @@ if __name__ == "__main__":
     ensure_model_installed("qwen2.5vl:3b")
 
     load_config()
+    anchor_tracker = AnchorRegionTracker(ANCHOR_TEMPLATE_DIR, ANCHOR_THRESHOLD)
     Thread(target=hotkey_listener, daemon=True).start()
     Thread(target=lambda: app.run(host="127.0.0.1", port=5000, debug=False), daemon=True).start()
     launch_gui()
