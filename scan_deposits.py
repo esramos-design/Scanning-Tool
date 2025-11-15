@@ -1061,6 +1061,15 @@ border_canvas = None
 capture_overlay_root = None
 capture_overlay_canvas = None
 capture_rect_id = None
+capture_overlay_animation_job = None
+capture_overlay_last_layout = {
+    "overlay_width": None,
+    "overlay_height": None,
+    "left": None,
+    "top": None,
+    "cap_w": None,
+    "cap_h": None,
+}
 
 info_overlay_root = None
 info_overlay_canvas = None
@@ -1267,11 +1276,152 @@ def choose_label_color():
             info_overlay_canvas.itemconfig(info_text_id, fill=label_color)
 
 
+def _compute_capture_overlay_layout() -> Dict[str, int]:
+    cap_w = int(CAP_REGION['width'])
+    cap_h = int(CAP_REGION['height'])
+    padding_x, padding_y = 100, 40
+
+    overlay_width = cap_w + padding_x
+    overlay_height = cap_h + padding_y
+    left = int(CAP_REGION['left']) - (padding_x // 2)
+    top = int(CAP_REGION['top']) - padding_y
+
+    return {
+        "overlay_width": overlay_width,
+        "overlay_height": overlay_height,
+        "left": left,
+        "top": top,
+        "padding_x": padding_x,
+        "padding_y": padding_y,
+        "cap_w": cap_w,
+        "cap_h": cap_h,
+    }
+
+
+def _apply_capture_overlay_layout(*, force: bool = False) -> None:
+    global capture_overlay_last_layout
+
+    if not capture_overlay_canvas or not capture_rect_id or not capture_overlay_root:
+        return
+
+    layout = _compute_capture_overlay_layout()
+
+    padding_x = layout["padding_x"]
+    padding_y = layout["padding_y"]
+    cap_w = layout["cap_w"]
+    cap_h = layout["cap_h"]
+    overlay_width = layout["overlay_width"]
+    overlay_height = layout["overlay_height"]
+    left = layout["left"]
+    top = layout["top"]
+
+    last = capture_overlay_last_layout
+    size_changed = (
+        force
+        or last["overlay_width"] != overlay_width
+        or last["overlay_height"] != overlay_height
+    )
+    pos_changed = force or last["left"] != left or last["top"] != top
+    rect_changed = force or last["cap_w"] != cap_w or last["cap_h"] != cap_h
+
+    if size_changed:
+        capture_overlay_canvas.config(width=overlay_width, height=overlay_height)
+
+    if rect_changed:
+        capture_overlay_canvas.coords(
+            capture_rect_id,
+            padding_x // 2,
+            padding_y,
+            padding_x // 2 + cap_w,
+            padding_y + cap_h,
+        )
+
+    if size_changed or pos_changed:
+        capture_overlay_root.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
+        try:
+            capture_overlay_root.lift()
+        except tk.TclError:
+            pass
+
+    last.update(
+        {
+            "overlay_width": overlay_width,
+            "overlay_height": overlay_height,
+            "left": left,
+            "top": top,
+            "cap_w": cap_w,
+            "cap_h": cap_h,
+        }
+    )
+
+
+def _animate_capture_overlay() -> None:
+    global capture_overlay_animation_job
+
+    if (
+        not capture_overlay_root
+        or not capture_overlay_canvas
+        or not capture_rect_id
+        or not capture_overlay_root.winfo_exists()
+    ):
+        capture_overlay_animation_job = None
+        return
+
+    try:
+        _apply_capture_overlay_layout()
+    except tk.TclError:
+        capture_overlay_animation_job = None
+        return
+
+    try:
+        capture_overlay_animation_job = capture_overlay_root.after(33, _animate_capture_overlay)
+    except tk.TclError:
+        capture_overlay_animation_job = None
+
+
+def start_capture_overlay_animation(*, force: bool = False) -> None:
+    global capture_overlay_animation_job
+
+    if not capture_overlay_root or not capture_overlay_canvas or not capture_rect_id:
+        return
+
+    _apply_capture_overlay_layout(force=force)
+
+    if capture_overlay_animation_job is None:
+        try:
+            capture_overlay_animation_job = capture_overlay_root.after(33, _animate_capture_overlay)
+        except tk.TclError:
+            capture_overlay_animation_job = None
+
+
+def stop_capture_overlay_animation() -> None:
+    global capture_overlay_animation_job, capture_overlay_last_layout
+
+    if capture_overlay_animation_job is not None and capture_overlay_root:
+        try:
+            capture_overlay_root.after_cancel(capture_overlay_animation_job)
+        except (tk.TclError, ValueError):
+            pass
+    capture_overlay_animation_job = None
+
+    capture_overlay_last_layout.update(
+        {
+            "overlay_width": None,
+            "overlay_height": None,
+            "left": None,
+            "top": None,
+            "cap_w": None,
+            "cap_h": None,
+        }
+    )
+
+
 def show_capture_overlay():
     global border_canvas, capture_overlay_canvas, capture_overlay_root, capture_rect_id
 
     if capture_overlay_root and capture_overlay_root.winfo_exists():
         try:
+            stop_capture_overlay_animation()
             capture_overlay_root.destroy()
         except tk.TclError:
             pass
@@ -1308,6 +1458,8 @@ def show_capture_overlay():
         width=3,
         tags=("border",),
     )
+
+    start_capture_overlay_animation(force=True)
 
 
 def show_info_overlay(screen_width: int, screen_height: int) -> None:
@@ -1358,30 +1510,7 @@ def show_info_overlay(screen_width: int, screen_height: int) -> None:
 
 
 def update_capture_overlay_region():
-    global capture_overlay_canvas, capture_rect_id, capture_overlay_root
-    if not capture_overlay_canvas or not capture_rect_id or not capture_overlay_root:
-        return
-    cap_w, cap_h = int(CAP_REGION['width']), int(CAP_REGION['height'])
-    padding_x, padding_y = 100, 40
-    overlay_width = cap_w + padding_x
-    overlay_height = cap_h + padding_y
-    left = int(CAP_REGION['left']) - (padding_x // 2)
-    top = int(CAP_REGION['top']) - padding_y
-
-    capture_overlay_canvas.config(width=overlay_width, height=overlay_height)
-
-    capture_overlay_canvas.coords(
-        capture_rect_id,
-        padding_x // 2,
-        padding_y,
-        padding_x // 2 + cap_w,
-        padding_y + cap_h,
-    )
-    capture_overlay_root.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
-    try:
-        capture_overlay_root.lift()
-    except tk.TclError:
-        pass
+    start_capture_overlay_animation(force=True)
 
 
 def show_anchor_overlay():
@@ -1689,6 +1818,8 @@ def launch_gui():
         global capture_overlay_root, capture_overlay_canvas, capture_rect_id
         global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id
         global info_overlay_root, info_overlay_canvas, info_text_id
+
+        stop_capture_overlay_animation()
 
         save_config()
         try:
