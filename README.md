@@ -117,11 +117,14 @@ Use this if you want to keep the heavy AI workload off your gaming rig. You will
 **2. Gaming / Scanner PC**
 
 - Make sure both PCs are on the same network and note the LAN IP of the Ollama PC (for example `192.168.1.42`).
-- Set the `OLLAMA_HOST` environment variable before launching the scanner so it knows where to send requests:
-  - **Windows (PowerShell):** `setx OLLAMA_HOST "http://192.168.1.42:11434"`
-  - **Windows (Command Prompt - temporary for this session):** `set OLLAMA_HOST=http://192.168.1.42:11434`
-  - **Linux (temporary):** `export OLLAMA_HOST=http://192.168.1.42:11434`
-  - **Linux (persistent):** add the export line to your shell profile (e.g. `~/.bashrc`).
+- Tell the scanner where to connect. You can now do this directly inside the app or by editing the config file:
+  - Launch the scanner and open the **Ollama Connection** section. Enter the LAN address (for example `192.168.1.42:11434`) and click **Apply Host**. The value is saved in `config.json` under `OLLAMA_HOST` for future runs.
+  - Alternatively, edit `config.json` manually and set the `"OLLAMA_HOST"` field to the desired URL.
+  - Prefer environment variables instead? Set `OLLAMA_HOST` before launching the scanner so it knows where to send requests:
+    - **Windows (PowerShell):** `setx OLLAMA_HOST "http://192.168.1.42:11434"`
+    - **Windows (Command Prompt - temporary for this session):** `set OLLAMA_HOST=http://192.168.1.42:11434`
+    - **Linux (temporary):** `export OLLAMA_HOST=http://192.168.1.42:11434`
+    - **Linux (persistent):** add the export line to your shell profile (e.g. `~/.bashrc`).
 - Launch the scanner (`launch_windows.bat` or `./launch_linux.sh`). It will use the remote Ollama instance automatically.
 - The scanner detects that you're using a remote host and skips the local installer prompt. You'll see log messages confirming the remote address and whether the model is present on that machine.
 

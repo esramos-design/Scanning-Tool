@@ -455,8 +455,10 @@ def ensure_model_installed(model="qwen2.5vl:3b"):
     host_mode = "local" if is_local_ollama_host(host) else "remote"
     logger.info(f"Using {host_mode} Ollama host at {host}.")
 
+    client = get_ollama_client()
+
     try:
-        response = ollama.list()
+        response = client.list()
         available_models = {
             getattr(m, "model")
             for m in getattr(response, "models", [])
@@ -477,7 +479,7 @@ def ensure_model_installed(model="qwen2.5vl:3b"):
 
     logger.info(f"Model {model} not found on Ollama host {host}. Pulling now...")
     try:
-        progress = ollama.pull(model)
+        progress = client.pull(model)
         status = getattr(progress, "status", None)
         if status:
             logger.info(f"Ollama pull status: {status}")
@@ -505,13 +507,70 @@ MIN_CONFIDENCE = 0.65
 DEBUG_SHOW_OVERLAY = True
 OLLAMA_MODEL = "qwen2.5vl:3b"   # vision model
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
+CONFIGURED_OLLAMA_HOST = ""
+
+_OLLAMA_CLIENT = None
+_OLLAMA_CLIENT_HOST = ""
+
+_HOST_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
+
+
+def sanitize_ollama_host(value: str) -> str:
+    """Return a normalized Ollama host string, adding http:// when missing."""
+
+    host = (value or "").strip()
+    if not host:
+        return ""
+    if not _HOST_SCHEME_RE.match(host):
+        host = f"http://{host}"
+    return host
+
+
+def reset_ollama_client() -> None:
+    """Clear the cached Ollama client so the next call uses the latest host."""
+
+    global _OLLAMA_CLIENT, _OLLAMA_CLIENT_HOST
+    _OLLAMA_CLIENT = None
+    _OLLAMA_CLIENT_HOST = ""
+
+
+def set_configured_ollama_host(value: str) -> str:
+    """Update the configured Ollama host and refresh environment/client state."""
+
+    global CONFIGURED_OLLAMA_HOST
+    sanitized = sanitize_ollama_host(value)
+    if sanitized != CONFIGURED_OLLAMA_HOST:
+        CONFIGURED_OLLAMA_HOST = sanitized
+        if sanitized:
+            os.environ["OLLAMA_HOST"] = sanitized
+        else:
+            os.environ.pop("OLLAMA_HOST", None)
+        reset_ollama_client()
+    return sanitized
+
+
+def get_ollama_client() -> "ollama.Client":
+    """Return an Ollama client instance configured for the active host."""
+
+    global _OLLAMA_CLIENT, _OLLAMA_CLIENT_HOST
+    host = get_ollama_host()
+    if _OLLAMA_CLIENT is None or _OLLAMA_CLIENT_HOST != host:
+        _OLLAMA_CLIENT = ollama.Client(host=host)
+        _OLLAMA_CLIENT_HOST = host
+    return _OLLAMA_CLIENT
 
 
 def get_ollama_host() -> str:
     """Return the Ollama host configured via environment variable or the default."""
 
     env_host = os.getenv("OLLAMA_HOST", "").strip()
-    return env_host or DEFAULT_OLLAMA_HOST
+    if env_host:
+        return sanitize_ollama_host(env_host)
+
+    if CONFIGURED_OLLAMA_HOST:
+        return CONFIGURED_OLLAMA_HOST
+
+    return DEFAULT_OLLAMA_HOST
 
 
 def _normalize_for_parse(host: str) -> str:
@@ -800,7 +859,7 @@ anchor_tracker: Optional[AnchorRegionTracker] = None
 
 def load_config():
     global CAP_REGION, label_color, AUTO_ALIGN_ENABLED, ANCHOR_REGION, ANCHOR_OFFSET, ANCHOR_THRESHOLD, ANCHOR_TEMPLATE_DIR
-    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL, INFO_OVERLAY_OFFSET
+    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL, INFO_OVERLAY_OFFSET, CONFIGURED_OLLAMA_HOST
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
@@ -815,6 +874,12 @@ def load_config():
                 ALIGNMENT_POLL_INTERVAL_MS = data.get("ALIGNMENT_POLL_INTERVAL_MS", ALIGNMENT_POLL_INTERVAL_MS)
                 CONTINUOUS_CAPTURE_INTERVAL = data.get("CONTINUOUS_CAPTURE_INTERVAL", CONTINUOUS_CAPTURE_INTERVAL)
                 INFO_OVERLAY_OFFSET = data.get("INFO_OVERLAY_OFFSET", INFO_OVERLAY_OFFSET)
+                configured_host = sanitize_ollama_host(data.get("OLLAMA_HOST", CONFIGURED_OLLAMA_HOST))
+                if configured_host != CONFIGURED_OLLAMA_HOST:
+                    CONFIGURED_OLLAMA_HOST = configured_host
+                    if CONFIGURED_OLLAMA_HOST:
+                        os.environ["OLLAMA_HOST"] = CONFIGURED_OLLAMA_HOST
+                    reset_ollama_client()
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Config file invalid or empty, resetting: {e}")
             save_config()
@@ -828,7 +893,7 @@ def load_config():
 
 def save_config():
     global CAP_REGION, label_color, AUTO_ALIGN_ENABLED, ANCHOR_REGION, ANCHOR_OFFSET, ANCHOR_THRESHOLD, ANCHOR_TEMPLATE_DIR
-    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL, INFO_OVERLAY_OFFSET
+    global ALIGNMENT_POLL_INTERVAL_MS, CONTINUOUS_CAPTURE_INTERVAL, INFO_OVERLAY_OFFSET, CONFIGURED_OLLAMA_HOST
     data = {
         "CAP_REGION": CAP_REGION,
         "label_color": label_color,
@@ -840,6 +905,7 @@ def save_config():
         "ALIGNMENT_POLL_INTERVAL_MS": ALIGNMENT_POLL_INTERVAL_MS,
         "CONTINUOUS_CAPTURE_INTERVAL": CONTINUOUS_CAPTURE_INTERVAL,
         "INFO_OVERLAY_OFFSET": INFO_OVERLAY_OFFSET,
+        "OLLAMA_HOST": CONFIGURED_OLLAMA_HOST,
     }
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
@@ -926,8 +992,9 @@ def ocr_with_ollama(pil_img: Image.Image, model=OLLAMA_MODEL) -> str:
     buf = io.BytesIO()
     pil_img.save(buf, format="PNG")
     img_bytes = buf.getvalue()
+    client = get_ollama_client()
     try:
-        response = ollama.chat(
+        response = client.chat(
             model=model,
             messages=[{
                 "role": "user",
@@ -994,6 +1061,15 @@ border_canvas = None
 capture_overlay_root = None
 capture_overlay_canvas = None
 capture_rect_id = None
+capture_overlay_animation_job = None
+capture_overlay_last_layout = {
+    "overlay_width": None,
+    "overlay_height": None,
+    "left": None,
+    "top": None,
+    "cap_w": None,
+    "cap_h": None,
+}
 
 info_overlay_root = None
 info_overlay_canvas = None
@@ -1200,11 +1276,152 @@ def choose_label_color():
             info_overlay_canvas.itemconfig(info_text_id, fill=label_color)
 
 
+def _compute_capture_overlay_layout() -> Dict[str, int]:
+    cap_w = int(CAP_REGION['width'])
+    cap_h = int(CAP_REGION['height'])
+    padding_x, padding_y = 100, 40
+
+    overlay_width = cap_w + padding_x
+    overlay_height = cap_h + padding_y
+    left = int(CAP_REGION['left']) - (padding_x // 2)
+    top = int(CAP_REGION['top']) - padding_y
+
+    return {
+        "overlay_width": overlay_width,
+        "overlay_height": overlay_height,
+        "left": left,
+        "top": top,
+        "padding_x": padding_x,
+        "padding_y": padding_y,
+        "cap_w": cap_w,
+        "cap_h": cap_h,
+    }
+
+
+def _apply_capture_overlay_layout(*, force: bool = False) -> None:
+    global capture_overlay_last_layout
+
+    if not capture_overlay_canvas or not capture_rect_id or not capture_overlay_root:
+        return
+
+    layout = _compute_capture_overlay_layout()
+
+    padding_x = layout["padding_x"]
+    padding_y = layout["padding_y"]
+    cap_w = layout["cap_w"]
+    cap_h = layout["cap_h"]
+    overlay_width = layout["overlay_width"]
+    overlay_height = layout["overlay_height"]
+    left = layout["left"]
+    top = layout["top"]
+
+    last = capture_overlay_last_layout
+    size_changed = (
+        force
+        or last["overlay_width"] != overlay_width
+        or last["overlay_height"] != overlay_height
+    )
+    pos_changed = force or last["left"] != left or last["top"] != top
+    rect_changed = force or last["cap_w"] != cap_w or last["cap_h"] != cap_h
+
+    if size_changed:
+        capture_overlay_canvas.config(width=overlay_width, height=overlay_height)
+
+    if rect_changed:
+        capture_overlay_canvas.coords(
+            capture_rect_id,
+            padding_x // 2,
+            padding_y,
+            padding_x // 2 + cap_w,
+            padding_y + cap_h,
+        )
+
+    if size_changed or pos_changed:
+        capture_overlay_root.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
+        try:
+            capture_overlay_root.lift()
+        except tk.TclError:
+            pass
+
+    last.update(
+        {
+            "overlay_width": overlay_width,
+            "overlay_height": overlay_height,
+            "left": left,
+            "top": top,
+            "cap_w": cap_w,
+            "cap_h": cap_h,
+        }
+    )
+
+
+def _animate_capture_overlay() -> None:
+    global capture_overlay_animation_job
+
+    if (
+        not capture_overlay_root
+        or not capture_overlay_canvas
+        or not capture_rect_id
+        or not capture_overlay_root.winfo_exists()
+    ):
+        capture_overlay_animation_job = None
+        return
+
+    try:
+        _apply_capture_overlay_layout()
+    except tk.TclError:
+        capture_overlay_animation_job = None
+        return
+
+    try:
+        capture_overlay_animation_job = capture_overlay_root.after(33, _animate_capture_overlay)
+    except tk.TclError:
+        capture_overlay_animation_job = None
+
+
+def start_capture_overlay_animation(*, force: bool = False) -> None:
+    global capture_overlay_animation_job
+
+    if not capture_overlay_root or not capture_overlay_canvas or not capture_rect_id:
+        return
+
+    _apply_capture_overlay_layout(force=force)
+
+    if capture_overlay_animation_job is None:
+        try:
+            capture_overlay_animation_job = capture_overlay_root.after(33, _animate_capture_overlay)
+        except tk.TclError:
+            capture_overlay_animation_job = None
+
+
+def stop_capture_overlay_animation() -> None:
+    global capture_overlay_animation_job, capture_overlay_last_layout
+
+    if capture_overlay_animation_job is not None and capture_overlay_root:
+        try:
+            capture_overlay_root.after_cancel(capture_overlay_animation_job)
+        except (tk.TclError, ValueError):
+            pass
+    capture_overlay_animation_job = None
+
+    capture_overlay_last_layout.update(
+        {
+            "overlay_width": None,
+            "overlay_height": None,
+            "left": None,
+            "top": None,
+            "cap_w": None,
+            "cap_h": None,
+        }
+    )
+
+
 def show_capture_overlay():
     global border_canvas, capture_overlay_canvas, capture_overlay_root, capture_rect_id
 
     if capture_overlay_root and capture_overlay_root.winfo_exists():
         try:
+            stop_capture_overlay_animation()
             capture_overlay_root.destroy()
         except tk.TclError:
             pass
@@ -1241,6 +1458,8 @@ def show_capture_overlay():
         width=3,
         tags=("border",),
     )
+
+    start_capture_overlay_animation(force=True)
 
 
 def show_info_overlay(screen_width: int, screen_height: int) -> None:
@@ -1291,30 +1510,7 @@ def show_info_overlay(screen_width: int, screen_height: int) -> None:
 
 
 def update_capture_overlay_region():
-    global capture_overlay_canvas, capture_rect_id, capture_overlay_root
-    if not capture_overlay_canvas or not capture_rect_id or not capture_overlay_root:
-        return
-    cap_w, cap_h = int(CAP_REGION['width']), int(CAP_REGION['height'])
-    padding_x, padding_y = 100, 40
-    overlay_width = cap_w + padding_x
-    overlay_height = cap_h + padding_y
-    left = int(CAP_REGION['left']) - (padding_x // 2)
-    top = int(CAP_REGION['top']) - padding_y
-
-    capture_overlay_canvas.config(width=overlay_width, height=overlay_height)
-
-    capture_overlay_canvas.coords(
-        capture_rect_id,
-        padding_x // 2,
-        padding_y,
-        padding_x // 2 + cap_w,
-        padding_y + cap_h,
-    )
-    capture_overlay_root.geometry(f"{overlay_width}x{overlay_height}+{left}+{top}")
-    try:
-        capture_overlay_root.lift()
-    except tk.TclError:
-        pass
+    start_capture_overlay_animation(force=True)
 
 
 def show_anchor_overlay():
@@ -1623,6 +1819,8 @@ def launch_gui():
         global anchor_overlay_root, anchor_overlay_canvas, anchor_rect_id
         global info_overlay_root, info_overlay_canvas, info_text_id
 
+        stop_capture_overlay_animation()
+
         save_config()
         try:
             for window in (capture_overlay_root, anchor_overlay_root, info_overlay_root):
@@ -1651,6 +1849,32 @@ def launch_gui():
 
     status_var = tk.StringVar(value="Ready.")
     anchor_status_var = tk.StringVar(value="Head sway compensation ready.")
+    ollama_host_var = tk.StringVar(value=CONFIGURED_OLLAMA_HOST)
+    ollama_active_host_var = tk.StringVar()
+
+    def refresh_active_host_label() -> None:
+        ollama_active_host_var.set(f"Active host: {get_ollama_host()}")
+
+    def apply_ollama_host_from_ui() -> None:
+        sanitized = set_configured_ollama_host(ollama_host_var.get())
+        refresh_active_host_label()
+        active_host = get_ollama_host()
+        if sanitized:
+            ollama_host_var.set(sanitized)
+            message = f"Remote Ollama host set to {active_host}."
+        else:
+            message = f"Ollama host cleared. Using {active_host}."
+        status_var.set(message)
+        logger.info(message)
+
+    def use_local_ollama_host() -> None:
+        ollama_host_var.set("")
+        set_configured_ollama_host("")
+        refresh_active_host_label()
+        active_host = get_ollama_host()
+        message = f"Ollama host cleared. Using {active_host}."
+        status_var.set(message)
+        logger.info(message)
 
     alignment_status_cache = {"message": None}
     anchor_status_hold = {"until": 0.0}
@@ -1659,6 +1883,8 @@ def launch_gui():
         anchor_status_var.set(message)
         anchor_status_hold["until"] = time.time() + hold
         alignment_status_cache["message"] = None
+
+    refresh_active_host_label()
 
     main = ttk.Frame(root, style="Glass.Main.TFrame", padding=20)
     main.pack(fill="both", expand=True, padx=15, pady=15)
@@ -1820,6 +2046,39 @@ def launch_gui():
         anchor_offset_y,
     )
     sync_anchor_sliders()
+
+    frm_network = ttk.LabelFrame(main, text="Ollama Connection", style="Glass.TLabelframe")
+    frm_network.pack(fill="x", padx=5, pady=8)
+    ttk.Label(
+        frm_network,
+        text="Remote Ollama host (IPv4/hostname with optional port). Leave blank to use this PC.",
+        style="Glass.Small.TLabel",
+        wraplength=360,
+        justify="left",
+    ).pack(fill="x", padx=5, pady=(5, 2))
+    host_entry = ttk.Entry(frm_network, textvariable=ollama_host_var)
+    host_entry.pack(fill="x", padx=5, pady=(0, 5))
+
+    network_button_row = ttk.Frame(frm_network, style="Glass.Section.TFrame")
+    network_button_row.pack(fill="x", padx=5, pady=(0, 5))
+    ttk.Button(
+        network_button_row,
+        text="Apply Host",
+        command=apply_ollama_host_from_ui,
+        style="Glass.TButton",
+    ).pack(side="left", padx=5)
+    ttk.Button(
+        network_button_row,
+        text="Use Localhost",
+        command=use_local_ollama_host,
+        style="Glass.TButton",
+    ).pack(side="left", padx=5)
+    ttk.Label(
+        frm_network,
+        textvariable=ollama_active_host_var,
+        style="Glass.Small.TLabel",
+        justify="left",
+    ).pack(fill="x", padx=5, pady=(0, 5))
 
     anchor_btn_row = ttk.Frame(frm_anchor, style="Glass.Section.TFrame")
     anchor_btn_row.pack(fill="x", padx=5, pady=5)
@@ -2015,11 +2274,11 @@ def hotkey_listener():
 
 # ---------- Main ----------
 if __name__ == "__main__":
+    load_config()
     # Ensure Ollama + model before starting
     ensure_ollama_installed()
     ensure_model_installed("qwen2.5vl:3b")
 
-    load_config()
     anchor_tracker = AnchorRegionTracker(ANCHOR_TEMPLATE_DIR, ANCHOR_THRESHOLD)
     Thread(target=hotkey_listener, daemon=True).start()
     local_ip = get_local_ip()
