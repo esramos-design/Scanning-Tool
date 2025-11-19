@@ -96,6 +96,7 @@ You can run Ollama on the same computer as the game **or** on a different machin
 
 This is the simplest approach. After the installer finishes, start the scanner normally (`launch_windows.bat` or `./launch_linux.sh`) and it will talk to the Ollama service that is already running on `http://127.0.0.1:11434`.
 - No extra configuration is required—the scanner falls back to `http://127.0.0.1:11434` automatically when `OLLAMA_HOST` is not set.
+- If the Ollama service isn't running yet, the scanner will automatically launch it with `ollama serve` before connecting.
 
 #### Option B: Run Ollama on another PC on your LAN
 Use this if you want to keep the heavy AI workload off your gaming rig. You will set up two machines:

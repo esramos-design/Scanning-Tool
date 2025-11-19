@@ -448,6 +448,24 @@ def ensure_ollama_installed():
             logger.error(f"Error checking Ollama: {e}")
             sys.exit("Please install Ollama and rerun this program.")
 
+
+def ensure_ollama_running() -> None:
+    """Start the local Ollama service if needed before contacting the API."""
+
+    host = get_ollama_host()
+    if not is_local_ollama_host(host):
+        logger.info(f"Using remote Ollama host at {host}; assuming it is managed externally.")
+        return
+
+    if is_ollama_running(host):
+        logger.info("Local Ollama service detected.")
+        return
+
+    if start_local_ollama_service(host):
+        return
+
+    sys.exit("Unable to reach a local Ollama service. Please start 'ollama serve' and rerun.")
+
 def ensure_model_installed(model="qwen2.5vl:3b"):
     """Ensure the Ollama model exists on the configured host."""
 
@@ -511,6 +529,7 @@ CONFIGURED_OLLAMA_HOST = ""
 
 _OLLAMA_CLIENT = None
 _OLLAMA_CLIENT_HOST = ""
+_OLLAMA_SERVER_PROCESS: Optional[subprocess.Popen] = None
 
 _HOST_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
 
@@ -593,6 +612,65 @@ def is_local_ollama_host(host: str) -> bool:
     if hostname.startswith("127."):
         return True
 
+    return False
+
+
+def _get_host_port(host: str) -> Tuple[str, int]:
+    """Return hostname and port for the given Ollama host string."""
+
+    parsed = urlparse(_normalize_for_parse(host))
+    hostname = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 11434
+    return hostname, port
+
+
+def is_ollama_running(host: str, timeout: float = 2.0) -> bool:
+    """Check whether an Ollama service is listening at the provided host."""
+
+    hostname, port = _get_host_port(host)
+    try:
+        with socket.create_connection((hostname, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def start_local_ollama_service(host: str, wait_seconds: float = 10.0) -> bool:
+    """Attempt to launch `ollama serve` locally and wait for readiness."""
+
+    global _OLLAMA_SERVER_PROCESS
+
+    if not shutil.which("ollama"):
+        logger.warning("Cannot start Ollama automatically because it is not installed.")
+        return False
+
+    if _OLLAMA_SERVER_PROCESS and _OLLAMA_SERVER_PROCESS.poll() is None:
+        return True
+
+    logger.info("Starting local Ollama service with 'ollama serve'...")
+    try:
+        _OLLAMA_SERVER_PROCESS = subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        logger.error(f"Unable to start Ollama service automatically: {exc}")
+        return False
+
+    deadline = time.time() + wait_seconds
+    while time.time() < deadline:
+        if is_ollama_running(host):
+            logger.info("Ollama service is now running.")
+            return True
+        if _OLLAMA_SERVER_PROCESS.poll() is not None:
+            logger.error("'ollama serve' exited before the service became ready.")
+            return False
+        time.sleep(0.5)
+
+    logger.warning("Timed out waiting for Ollama service to start. Please start it manually.")
     return False
 
 # Regex for codes
@@ -2277,6 +2355,7 @@ if __name__ == "__main__":
     load_config()
     # Ensure Ollama + model before starting
     ensure_ollama_installed()
+    ensure_ollama_running()
     ensure_model_installed("qwen2.5vl:3b")
 
     anchor_tracker = AnchorRegionTracker(ANCHOR_TEMPLATE_DIR, ANCHOR_THRESHOLD)
