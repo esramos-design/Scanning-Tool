@@ -1991,7 +1991,7 @@ def launch_gui():
     canvas.pack(side="left", fill="both", expand=True)
 
     main = ttk.Frame(canvas, style="Glass.Main.TFrame", padding=20)
-    window_id = canvas.create_window((0, 0), window=main, anchor="nw", padx=15, pady=15)
+    window_id = canvas.create_window((15, 15), window=main, anchor="nw")
 
     def _sync_scroll_region(_event=None):
         canvas.configure(scrollregion=canvas.bbox("all"))
