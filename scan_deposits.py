@@ -1954,6 +1954,17 @@ def launch_gui():
         status_var.set(message)
         logger.info(message)
 
+    def open_mobile_overlay() -> None:
+        url = f"http://{get_local_ip()}:5000"
+        try:
+            webbrowser.open_new_tab(url)
+        except Exception as exc:
+            status_var.set(f"Unable to open browser: {exc}")
+            logger.warning("Failed to open mobile overlay URL %s: %s", url, exc)
+        else:
+            status_var.set(f"Opening overlay in browser: {url}")
+            logger.info("Opened mobile overlay URL: %s", url)
+
     alignment_status_cache = {"message": None}
     anchor_status_hold = {"until": 0.0}
 
@@ -2149,6 +2160,12 @@ def launch_gui():
         network_button_row,
         text="Use Localhost",
         command=use_local_ollama_host,
+        style="Glass.TButton",
+    ).pack(side="left", padx=5)
+    ttk.Button(
+        network_button_row,
+        text="Open Mobile UI",
+        command=open_mobile_overlay,
         style="Glass.TButton",
     ).pack(side="left", padx=5)
     ttk.Label(
