@@ -448,6 +448,24 @@ def ensure_ollama_installed():
             logger.error(f"Error checking Ollama: {e}")
             sys.exit("Please install Ollama and rerun this program.")
 
+
+def ensure_ollama_running() -> None:
+    """Start the local Ollama service if needed before contacting the API."""
+
+    host = get_ollama_host()
+    if not is_local_ollama_host(host):
+        logger.info(f"Using remote Ollama host at {host}; assuming it is managed externally.")
+        return
+
+    if is_ollama_running(host):
+        logger.info("Local Ollama service detected.")
+        return
+
+    if start_local_ollama_service(host):
+        return
+
+    sys.exit("Unable to reach a local Ollama service. Please start 'ollama serve' and rerun.")
+
 def ensure_model_installed(model="qwen2.5vl:3b"):
     """Ensure the Ollama model exists on the configured host."""
 
@@ -511,6 +529,7 @@ CONFIGURED_OLLAMA_HOST = ""
 
 _OLLAMA_CLIENT = None
 _OLLAMA_CLIENT_HOST = ""
+_OLLAMA_SERVER_PROCESS: Optional[subprocess.Popen] = None
 
 _HOST_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
 
@@ -593,6 +612,65 @@ def is_local_ollama_host(host: str) -> bool:
     if hostname.startswith("127."):
         return True
 
+    return False
+
+
+def _get_host_port(host: str) -> Tuple[str, int]:
+    """Return hostname and port for the given Ollama host string."""
+
+    parsed = urlparse(_normalize_for_parse(host))
+    hostname = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 11434
+    return hostname, port
+
+
+def is_ollama_running(host: str, timeout: float = 2.0) -> bool:
+    """Check whether an Ollama service is listening at the provided host."""
+
+    hostname, port = _get_host_port(host)
+    try:
+        with socket.create_connection((hostname, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def start_local_ollama_service(host: str, wait_seconds: float = 10.0) -> bool:
+    """Attempt to launch `ollama serve` locally and wait for readiness."""
+
+    global _OLLAMA_SERVER_PROCESS
+
+    if not shutil.which("ollama"):
+        logger.warning("Cannot start Ollama automatically because it is not installed.")
+        return False
+
+    if _OLLAMA_SERVER_PROCESS and _OLLAMA_SERVER_PROCESS.poll() is None:
+        return True
+
+    logger.info("Starting local Ollama service with 'ollama serve'...")
+    try:
+        _OLLAMA_SERVER_PROCESS = subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        logger.error(f"Unable to start Ollama service automatically: {exc}")
+        return False
+
+    deadline = time.time() + wait_seconds
+    while time.time() < deadline:
+        if is_ollama_running(host):
+            logger.info("Ollama service is now running.")
+            return True
+        if _OLLAMA_SERVER_PROCESS.poll() is not None:
+            logger.error("'ollama serve' exited before the service became ready.")
+            return False
+        time.sleep(0.5)
+
+    logger.warning("Timed out waiting for Ollama service to start. Please start it manually.")
     return False
 
 # Regex for codes
@@ -1876,6 +1954,17 @@ def launch_gui():
         status_var.set(message)
         logger.info(message)
 
+    def open_mobile_overlay() -> None:
+        url = f"http://{get_local_ip()}:5000"
+        try:
+            webbrowser.open_new_tab(url)
+        except Exception as exc:
+            status_var.set(f"Unable to open browser: {exc}")
+            logger.warning("Failed to open mobile overlay URL %s: %s", url, exc)
+        else:
+            status_var.set(f"Opening overlay in browser: {url}")
+            logger.info("Opened mobile overlay URL: %s", url)
+
     alignment_status_cache = {"message": None}
     anchor_status_hold = {"until": 0.0}
 
@@ -1886,8 +1975,41 @@ def launch_gui():
 
     refresh_active_host_label()
 
-    main = ttk.Frame(root, style="Glass.Main.TFrame", padding=20)
-    main.pack(fill="both", expand=True, padx=15, pady=15)
+    # Scrollable container so the full control panel is accessible on smaller displays.
+    container = ttk.Frame(root, style="Glass.Main.TFrame")
+    container.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(
+        container,
+        background=colors["background"],
+        highlightthickness=0,
+        borderwidth=0,
+    )
+    scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    main = ttk.Frame(canvas, style="Glass.Main.TFrame", padding=20)
+    window_id = canvas.create_window((15, 15), window=main, anchor="nw")
+
+    def _sync_scroll_region(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        canvas.itemconfigure(window_id, width=canvas.winfo_width())
+
+    def _on_mousewheel(event):
+        # Windows/MacOS delta uses event.delta; Linux uses Button-4/5 events below.
+        step = int(-1 * (event.delta / 120))
+        canvas.yview_scroll(step, "units")
+
+    def _on_mousewheel_linux(event, direction: int):
+        canvas.yview_scroll(direction, "units")
+
+    main.bind("<Configure>", _sync_scroll_region)
+    canvas.bind("<Configure>", _sync_scroll_region)
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+    canvas.bind_all("<Button-4>", lambda e: _on_mousewheel_linux(e, -1))
+    canvas.bind_all("<Button-5>", lambda e: _on_mousewheel_linux(e, 1))
 
     frm_region = ttk.LabelFrame(main, text="Capture Region", style="Glass.TLabelframe")
     frm_region.pack(fill="x", padx=5, pady=8)
@@ -2071,6 +2193,12 @@ def launch_gui():
         network_button_row,
         text="Use Localhost",
         command=use_local_ollama_host,
+        style="Glass.TButton",
+    ).pack(side="left", padx=5)
+    ttk.Button(
+        network_button_row,
+        text="Open Mobile UI",
+        command=open_mobile_overlay,
         style="Glass.TButton",
     ).pack(side="left", padx=5)
     ttk.Label(
@@ -2277,6 +2405,7 @@ if __name__ == "__main__":
     load_config()
     # Ensure Ollama + model before starting
     ensure_ollama_installed()
+    ensure_ollama_running()
     ensure_model_installed("qwen2.5vl:3b")
 
     anchor_tracker = AnchorRegionTracker(ANCHOR_TEMPLATE_DIR, ANCHOR_THRESHOLD)
