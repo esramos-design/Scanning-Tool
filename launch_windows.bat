@@ -123,7 +123,15 @@ echo.
 
 cd /d "%SCRIPT_DIR%"
 python scan_deposits.py
+set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.
 echo Application closed.
-pause
+
+if "%EXIT_CODE%"=="0" (
+    exit /b 0
+) else (
+    echo Application exited with error %EXIT_CODE%.
+    timeout /t 8 >nul
+    exit /b %EXIT_CODE%
+)
