@@ -1975,8 +1975,41 @@ def launch_gui():
 
     refresh_active_host_label()
 
-    main = ttk.Frame(root, style="Glass.Main.TFrame", padding=20)
-    main.pack(fill="both", expand=True, padx=15, pady=15)
+    # Scrollable container so the full control panel is accessible on smaller displays.
+    container = ttk.Frame(root, style="Glass.Main.TFrame")
+    container.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(
+        container,
+        background=colors["background"],
+        highlightthickness=0,
+        borderwidth=0,
+    )
+    scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    main = ttk.Frame(canvas, style="Glass.Main.TFrame", padding=20)
+    window_id = canvas.create_window((0, 0), window=main, anchor="nw", padx=15, pady=15)
+
+    def _sync_scroll_region(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        canvas.itemconfigure(window_id, width=canvas.winfo_width())
+
+    def _on_mousewheel(event):
+        # Windows/MacOS delta uses event.delta; Linux uses Button-4/5 events below.
+        step = int(-1 * (event.delta / 120))
+        canvas.yview_scroll(step, "units")
+
+    def _on_mousewheel_linux(event, direction: int):
+        canvas.yview_scroll(direction, "units")
+
+    main.bind("<Configure>", _sync_scroll_region)
+    canvas.bind("<Configure>", _sync_scroll_region)
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+    canvas.bind_all("<Button-4>", lambda e: _on_mousewheel_linux(e, -1))
+    canvas.bind_all("<Button-5>", lambda e: _on_mousewheel_linux(e, 1))
 
     frm_region = ttk.LabelFrame(main, text="Capture Region", style="Glass.TLabelframe")
     frm_region.pack(fill="x", padx=5, pady=8)
